@@ -20,6 +20,23 @@
   <body></body>
   <script>
 
+    /* IRONCLAD DEFENSIVE HOTFIX: 
+      Intercepts WebGazer's video visibility engine to prevent null-pointer 
+      style crashes during jsPsych trial transitions. This keeps the 
+      click-handler thread alive.
+    */
+    if (window.webgazer && typeof webgazer.showVideo === 'function') {
+      var originalShowVideo = webgazer.showVideo;
+      webgazer.showVideo = function(val) {
+        if (document.getElementById('webgazerVideoFeed')) {
+          return originalShowVideo.apply(this, arguments);
+        } else {
+          console.warn("Defensive Patch: Suppressed video style shift on missing DOM element.");
+          return this;
+        }
+      };
+    }
+
     /* Initialize jsPsych with the WebGazer Extension active */
     var jsPsych = initJsPsych({
       extensions: [
