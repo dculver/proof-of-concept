@@ -28,7 +28,7 @@
         // Visual loading indicator while transmission occurs
         document.body.innerHTML = '<div style="text-align:center; margin-top:20%; font-family:Arial;"><h3>Syncing data securely to central repository... Please do not close this tab.</h3></div>';
         
-        // Trigger data pipeline function
+        // Trigger data pipeline transmission function
         transmitDataPayload(jsPsych.data.get().json());
       }
     });
@@ -50,7 +50,7 @@
     };
     timeline.push(init_mic);
 
-    /* 3. WebGazer Webcam & Calibration Grid Setup (Matches your plugin-webgazer-init-calibration.js) */
+    /* 3. WebGazer Webcam & Calibration Grid Setup (Matches your plugin-webgazer-init-calibration.js file) */
     var init_camera_and_calibration = {
       type: jsPsychWebgazerInitCalibration,
       calibration_instructions: "<p>Center your face in the webcam view window. Click on each of the points that appear on the grid until they turn green to synchronize eye tracking.</p>",
