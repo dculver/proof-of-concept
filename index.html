@@ -11,8 +11,7 @@
 
     <script src="js/webgazer.js"></script>
     <script src="js/extension-webgazer.js"></script>
-    <script src="js/plugin-webgazer-init-camera.js"></script>
-    <script src="js/plugin-webgazer-init-calibrate.js"></script>
+    <script src="js/plugin-webgazer-init-calibration.js"></script>
 
     <script src="js/plugin-initialize-microphone.js"></script>
     <script src="js/plugin-html-audio-response.js"></script>
@@ -26,89 +25,90 @@
         { type: jsPsychExtensionWebgazer }
       ],
       on_finish: function() {
-        // Switch the final display to a visual loading state while transmission occurs
+        // Visual loading indicator while transmission occurs
         document.body.innerHTML = '<div style="text-align:center; margin-top:20%; font-family:Arial;"><h3>Syncing data securely to central repository... Please do not close this tab.</h3></div>';
         
-        // Execute the centralized data pipeline function
+        // Trigger data pipeline function
         transmitDataPayload(jsPsych.data.get().json());
       }
     });
 
+    /* create timeline */
     var timeline = [];
 
-    /* 1. Preload Assets */
+    /* 1. Preload Images */
     var preload = {
       type: jsPsychPreload,
       images: ['img/blue.png', 'img/orange.png']
     };
     timeline.push(preload);
 
-    /* 2. Hardware Access: Safe Audio Request Initialization */
+    /* 2. Microphone Hardware Initialization */
     var init_mic = {
       type: jsPsychInitializeMicrophone,
       error_message: "<p>Microphone access is required to participate in this study. Please check your browser settings and refresh.</p>"
     };
     timeline.push(init_mic);
 
-    /* 3. Hardware Access: WebGazer Camera Authorization & Initialization */
-    var init_camera = {
-      type: jsPsychWebgazerInitCamera,
-      instructions: "<p>Center your face in the webcam window until the tracking indicators align.</p>",
-      button_text: "Continue to Calibration"
+    /* 3. WebGazer Webcam & Calibration Grid Setup (Matches your plugin-webgazer-init-calibration.js) */
+    var init_camera_and_calibration = {
+      type: jsPsychWebgazerInitCalibration,
+      calibration_instructions: "<p>Center your face in the webcam view window. Click on each of the points that appear on the grid until they turn green to synchronize eye tracking.</p>",
+      validation_instructions: "<p>Now, look at the black dots to verify eye-tracking accuracy across the coordinates.</p>"
     };
-    timeline.push(init_camera);
+    timeline.push(init_camera_and_calibration);
 
-    /* 4. Hardware Access: Synchronize Gaze Calibration Points Matrix */
-    var calibration_grid = {
-      type: jsPsychWebgazerCalibrate,
-      calibration_mode: 'click',
-      calibration_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
-      point_size: 20
-    };
-    timeline.push(calibration_grid);
-
-    /* 5. Welcome Screen */
+    /* 4. Welcome Message Trial */
     var welcome = {
       type: jsPsychHtmlKeyboardResponse,
-      stimulus: "System cleared. Welcome to the simulation. Press any key to begin instructions."
+      stimulus: "Welcome to the experiment. Press any key to begin."
     };
     timeline.push(welcome);
 
-    /* 6. Instructional Protocol */
+    /* 5. Instructions Trial */
     var instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
-        <p>In this baseline trial evaluation, a circle will appear in the center of the screen.</p>
-        <p>If the circle is <strong>blue</strong>, press <strong>F</strong>. If it is <strong>orange</strong>, press <strong>J</strong>.</p>
-        <p>Your gaze coordinate profiles are mapped automatically during execution.</p>
-        <p>Press any key to launch the trial block.</p>
+        <p>In this experiment, a circle will appear in the center of the screen.</p>
+        <p>If the circle is <strong>blue</strong>, press the letter F on the keyboard as fast as you can.</p>
+        <p>If the circle is <strong>orange</strong>, press the letter J as fast as you can.</p>
+        <div style='width: 700px; margin: auto; padding: 20px;'>
+          <div style='float: left; margin-right: 50px;'><img src='img/blue.png'><p class='small'><strong>Press the F key</strong></p></div>
+          <div style='float: right; margin-left: 50px;'><img src='img/orange.png'><p class='small'><strong>Press the J key</strong></p></div>
+        </div>
+        <p style='clear: both; padding-top: 20px;'>Press any key to begin.</p>
       `,
-      post_trial_gap: 1000
+      post_trial_gap: 2000
     };
     timeline.push(instructions);
 
+    /* Define trial stimuli array */
     var test_stimuli = [
-      { stimulus: "img/blue.png", correct_response: 'f'},
-      { stimulus: "img/orange.png", correct_response: 'j'}
+      { stimulus: "img/blue.png",  correct_response: 'f'},
+      { stimulus: "img/orange.png",  correct_response: 'j'}
     ];
 
+    /* 6. Fixation Cross */
     var fixation = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: '<div style="font-size:60px;">+</div>',
       choices: "NO_KEYS",
       trial_duration: function(){
-        return jsPsych.randomization.sampleWithoutReplacement([500, 750, 1000, 1250], 1)[0];
+        return jsPsych.randomization.sampleWithoutReplacement([250, 500, 750, 1000, 1250, 1500, 1750, 2000], 1)[0];
+      },
+      data: {
+        task: 'fixation'
       }
     };
 
-    /* 7. Active Stimulus Assessment with Eye-Tracking Targets */
-    var test_trial = {
+    /* 7. Active Image Assessment with Eye-Tracking Targets Enabled */
+    var test = {
       type: jsPsychImageKeyboardResponse,
       stimulus: jsPsych.timelineVariable('stimulus'),
       choices: ['f', 'j'],
       extensions: [
         {
-          type: jsPsychExtensionWebgazer, 
+          type: jsPsychExtensionWebgazer,
           params: { targets: ['#jspsych-image-keyboard-response-stimulus'] }
         }
       ],
@@ -121,31 +121,48 @@
       }
     };
 
+    /* Define test procedure loop */
     var test_procedure = {
-      timeline: [fixation, test_trial],
+      timeline: [fixation, test],
       timeline_variables: test_stimuli,
-      repetitions: 3, 
+      repetitions: 5,
       randomize_order: true
     };
     timeline.push(test_procedure);
 
-    /* 8. Unmoderated Retrospective Think-Aloud Segment */
-    var retrospective_reflection = {
+    /* 8. Audio Response Reflection (Think-Aloud Component) */
+    var audio_reflection = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
-        <div style="width:700px; text-align:left; font-family:sans-serif; background:#f4f4f4; padding:20px; border-radius:5px;">
-          <h3>Retrospective Case Reflection</h3>
-          <p>The trial block is complete. Please take up to 45 seconds to explain out loud the strategy you deployed to balance response speed against accuracy during this tracking block.</p>
-          <p style="color:#d9534f;"><strong>🎙️ Audio Recording Active. Speak clearly into your microphone now...</strong></p>
+        <div style="width:650px; text-align:left; font-family:Arial, sans-serif; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:5px; margin:auto;">
+          <h3>Retrospective Strategy Reflection</h3>
+          <p>The tracking trials are complete. Please take up to 30 seconds to explain out loud the strategy you used to balance your response speed against accuracy.</p>
+          <p style="color:#d9534f;"><strong>🎙️ Audio Recording Active. Please speak clearly into your microphone now...</strong></p>
         </div>
       `,
-      recording_duration: 45000,
+      recording_duration: 30000,
       show_done_button: true,
       data: { task: 'think_aloud_audio' }
     };
-    timeline.push(retrospective_reflection);
+    timeline.push(audio_reflection);
 
-    /* 9. Script to Pipeline Data Centrally via Secure Web Hook */
+    /* 9. Performance Debrief Display */
+    var debrief_block = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: function() {
+        var trials = jsPsych.data.get().filter({task: 'response'});
+        var correct_trials = trials.filter({correct: true});
+        var accuracy = Math.round(correct_trials.count() / trials.count() * 100);
+        var rt = Math.round(correct_trials.select('rt').mean());
+
+        return `<p>You responded correctly on ${accuracy}% of the trials.</p>
+          <p>Your average response time was ${rt}ms.</p>
+          <p>Press any key to complete the experiment and sync your data. Thank you!</p>`;
+      }
+    };
+    timeline.push(debrief_block);
+
+    /* 10. Automated Data Centralization Transmission Pipe */
     function transmitDataPayload(completeDataJson) {
       const TargetSecureEndpoint = "https://your-secure-project-id.supabase.co/rest/v1/simulation_logs"; 
       
@@ -176,7 +193,7 @@
       });
     }
 
-    /* Launch the execution stack */
+    /* start the experiment */
     jsPsych.run(timeline);
 
   </script>
