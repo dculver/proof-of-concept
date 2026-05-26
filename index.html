@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Multimodal Proof of Concept Simulation</title>
+    <script src="https://unpkg.com/jspsych@8.2.3"></script>
+    <link href="https://unpkg.com/jspsych@8.2.3/css/jspsych.css" rel="stylesheet" type="text/css" />
+
+    <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-image-keyboard-response@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-preload@2.1.0"></script>
+
+    <script src="https://cdn.jsdelivr.net/gh/brownhci/WebGazer@master/dist/webgazer.js"></script>
+    <script src="https://unpkg.com/@jspsych/extension-webgazer@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-webgazer-init-calibration@2.1.0"></script>
+
+    <script src="https://unpkg.com/@jspsych/plugin-initialize-microphone@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-html-audio-response@2.1.0"></script>
+  </head>
+  <body></body>
+  <script>
+
+    /* Initialize jsPsych with the WebGazer Extension active */
+    var jsPsych = initJsPsych({
+      extensions: [
+        { type: jsPsychExtensionWebgazer }
+      ],
+      on_finish: function() {
+        // Switch the final display to a visual loading state while transmission occurs
+        document.body.innerHTML = '<div style="text-align:center; margin-top:20%; font-family:Arial;"><h3>Syncing data securely to central repository... Please do not close this tab.</h3></div>';
+        
+        // Execute the centralized data pipeline function
+        transmitDataPayload(jsPsych.data.get().json());
+      }
+    });
+
+    var timeline = [];
+
+    /* 1. Preload Assets */
+    var preload = {
+      type: jsPsychPreload,
+      images: ['img/blue.png', 'img/orange.png']
+    };
+    timeline.push(preload);
+
+    /* 2. Hardware Access: Safe Audio Request Initialization */
+    // Prompts microphone validation immediately so browser security clearances don't break the trial flow later
+    var init_mic = {
+      type: jsPsychInitializeMicrophone,
+      error_message: "<p>Microphone access is required to participate in this study. Please check your browser settings and refresh.</p>"
+    };
+    timeline.push(init_mic);
+
+    /* 3. Hardware Access: WebGazer Setup and Validation Grid */
+    var init_camera_and_calibration = {
+      type: jsPsychWebgazerInitCalibration,
+      calibration_instructions: "<p>Center your face in the webcam view window. Click on each of the points that appear on the grid until they turn green to synchronize eye tracking.</p>",
+      validation_instructions: "<p>Now, look at the black dots to verify eye-tracking accuracy across the coordinates.</p>"
+    };
+    timeline.push(init_camera_and_calibration);
+
+    /* 4. Welcome Screen */
+    var welcome = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: "System cleared. Welcome to the simulation. Press any key to begin instructions."
+    };
+    timeline.push(welcome);
+
+    /* 5. Instructional Protocol */
+    var instructions = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: `
+        <p>In this baseline trial evaluation, a circle will appear in the center of the screen.</p>
+        <p>If the circle is <strong>blue</strong>, press <strong>F</strong>. If it is <strong>orange</strong>, press <strong>J</strong>.</p>
+        <p>Your gaze coordinate profiles are mapped automatically during execution.</p>
+        <p>Press any key to launch the trial block.</p>
+      `,
+      post_trial_gap: 1000
+    };
+    timeline.push(instructions);
+
+    var test_stimuli = [
+      { stimulus: "img/blue.png", correct_response: 'f'},
+      { stimulus: "img/orange.png", correct_response: 'j'}
+    ];
+
+    var fixation = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: '<div style="font-size:60px;">+</div>',
+      choices: "NO_KEYS",
+      trial_duration: function(){
+        return jsPsych.randomization.sampleWithoutReplacement([500, 750, 1000, 1250], 1)[0];
+      }
+    };
+
+    /* 6. Active Stimulus Assessment with Eye-Tracking Targets */
+    var test_trial = {
+      type: jsPsychImageKeyboardResponse,
+      stimulus: jsPsych.timelineVariable('stimulus'),
+      choices: ['f', 'j'],
+      // We instruct WebGazer exactly what DOM element to watch for gaze points
+      extensions: [
+        {
+          type: jsPsychExtensionWebgazer, 
+          params: { targets: ['#jspsych-image-keyboard-response-stimulus'] }
+        }
+      ],
+      data: {
+        task: 'response',
+        correct_response: jsPsych.timelineVariable('correct_response')
+      },
+      on_finish: function(data){
+        data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response);
+      }
+    };
+
+    var test_procedure = {
+      timeline: [fixation, test_trial],
+      timeline_variables: test_stimuli,
+      repetitions: 3, 
+      randomize_order: true
+    };
+    timeline.push(test_procedure);
+
+    /* 7. Unmoderated Retrospective Think-Aloud Segment */
+    // Immediately plays back a reflection state and triggers native microphone streaming audio back to data log
+    var retrospective_reflection = {
+      type: jsPsychHtmlAudioResponse,
+      stimulus: `
+        <div style="width:700px; text-align:left; font-family:sans-serif; background:#f4f4f4; padding:20px; border-radius:5px;">
+          <h3>Retrospective Case Reflection</h3>
+          <p>The trial block is complete. Please take up to 45 seconds to explain out loud the strategy you deployed to balance response speed against accuracy during this tracking block.</p>
+          <p style="color:#d9534f;"><strong>🎙️ Audio Recording Active. Speak clearly into your microphone now...</strong></p>
+        </div>
+      `,
+      recording_duration: 45000,
+      show_done_button: true,
+      data: { task: 'think_aloud_audio' }
+    };
+    timeline.push(retrospective_reflection);
+
+    /* 8. Script to Pipeline Data Centrally via Secure Web Hook */
+    function transmitDataPayload(completeDataJson) {
+      // Secure URL location targeting your backend serverless database API
+      const TargetSecureEndpoint = "https://your-secure-project-id.supabase.co/rest/v1/simulation_logs"; 
+      
+      fetch(TargetSecureEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer YOUR_PUBLIC_ANONYMOUS_API_KEY",
+          "Prefer": "return=minimal" 
+        },
+        body: JSON.stringify({
+          participant_token: "PARTICIPANT_" + Math.random().toString(36).substring(2, 8).toUpperCase(),
+          timestamp_logged: new Date().toISOString(),
+          payload_data: JSON.parse(completeDataJson)
+        })
+      })
+      .then(response => {
+        if (response.ok) {
+          document.body.innerHTML = '<div style="text-align:center; margin-top:20%; font-family:Arial; color:#2e7d32;"><h3>Data synchronized successfully! Your responses have been recorded. You may now close this window. Thank you.</h3></div>';
+        } else {
+          throw new Error('Network synchronization error.');
+        }
+      })
+      .catch(error => {
+        console.error('Pipeline Fault:', error);
+        // Fail-safe protection: if backend fails, force a local fallback option so research data is never destroyed
+        document.body.innerHTML = '<div style="text-align:center; margin-top:15%; font-family:Arial;"><h3>Server connection timed out.</h3><p>To protect your response data, please click the button below to download your log file manually and email it to the research team.</p></div>';
+        jsPsych.data.get().localSave('csv', 'fallback_backup_log.csv');
+      });
+    }
+
+    /* Launch the execution stack */
+    jsPsych.run(timeline);
+
+  </script>
+</html>
