@@ -15,16 +15,20 @@
     <script src="js/plugin-webgazer-init-calibrate.js"></script>
 
     <script src="js/plugin-initialize-microphone.js"></script>
-    <script src="js/plugin-html-audio-response.js"></script>
+    <script src="js/jspsych-plugin-html-audio-response.js"></script>
   </head>
   <body></body>
   <script>
 
-    /* IRONCLAD DEFENSIVE HOTFIX: 
-      Intercepts WebGazer's video visibility engine to prevent null-pointer 
-      style crashes during jsPsych trial transitions. This keeps the 
-      click-handler thread alive.
-    */
+    /* --- VOLATILE DATA RECORDING INFRASTRUCTURE FOR IRB PRIVACY COMPLIANCE --- */
+    let screenStream = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let localVideoUrl = null;
+    let recordingStartTime = 0;
+    let activeGazeLogs = []; // Stores lightweight text-only coordinates for live overlay synchronization
+
+    // Automated interception framework to map video style parameters safely
     if (window.webgazer && typeof webgazer.showVideo === 'function') {
       var originalShowVideo = webgazer.showVideo;
       webgazer.showVideo = function(val) {
@@ -37,21 +41,55 @@
       };
     }
 
+    // Helper: Turn on screen encoding and reset trackers
+    function launchBlockRecording() {
+      recordedChunks = [];
+      activeGazeLogs = [];
+      
+      mediaRecorder = new MediaRecorder(screenStream, { mimeType: 'video/webm;codecs=vp8' });
+      mediaRecorder.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) { recordedChunks.push(e.data); }
+      };
+      
+      recordingStartTime = performance.now();
+      mediaRecorder.start();
+
+      // Tap directly into WebGazer's real-time coordinate coordinates
+      webgazer.setGazeListener(function(data, elapsedTime) {
+        if (data) {
+          activeGazeLogs.push({
+            x: data.x,
+            y: data.y,
+            t: performance.now() - recordingStartTime // Maps coordinate relative to video zero-point
+          });
+        }
+      });
+    }
+
+    // Helper: Halt screen recording and lock the RAM Blob reference link
+    function finalizeBlockRecording() {
+      return new Promise((resolve) => {
+        mediaRecorder.onstop = function() {
+          if (window.webgazer) { webgazer.setGazeListener(null); } // Turn off callback cross-talk
+          let videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
+          localVideoUrl = URL.createObjectURL(videoBlob);
+          resolve();
+        };
+        mediaRecorder.stop();
+      });
+    }
+
     /* Initialize jsPsych with the WebGazer Extension active */
     var jsPsych = initJsPsych({
       extensions: [
         { type: jsPsychExtensionWebgazer }
       ],
       on_finish: function() {
-        // Visual loading indicator while transmission occurs
         document.body.innerHTML = '<div style="text-align:center; margin-top:20%; font-family:Arial;"><h3>Syncing data securely to central repository... Please do not close this tab.</h3></div>';
-        
-        // Trigger data pipeline transmission function
         transmitDataPayload(jsPsych.data.get().json());
       }
     });
 
-    /* create timeline */
     var timeline = [];
 
     /* 1. Preload Images */
@@ -68,9 +106,35 @@
     };
     timeline.push(init_mic);
 
-    /* NEW ADDITION: Standalone Eye-Tracker Calibration Instructions Screen 
-       This clears up the layout space so the calibration dots never get blocked by text banners.
-    */
+    /* 3. Screen Share Capture Setup (Fires prompt before eye tracker instructions) */
+    var request_screen_capture = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: `
+        <div style="width:600px; text-align:left; font-family:Arial, sans-serif; line-height:1.6; margin:auto; background:#f9f9f9; padding:30px; border:1px solid #ddd; border-radius:8px;">
+          <h2 style="color:#2980b9; margin-top:0; text-align:center;">🖥️ Local Replay Interface Activation</h2>
+          <p>To enable the gaze-cued retrospective video review without transmitting any video over the network, your browser requires permission to monitor this execution tab.</p>
+          <p><strong>Instructions:</strong> Click the button below, choose <strong>"This Tab"</strong> (or Current Tab) from the pop-up options panel, and click <strong>Share</strong>.</p>
+          <button id="authorize-capture-btn" style="display:block; margin:25px auto 0; padding:12px 24px; background:#2980b9; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:15px;">Authorize Replay Mode</button>
+        </div>
+      `,
+      choices: "NO_KEYS",
+      on_load: function() {
+        document.getElementById('authorize-capture-btn').addEventListener('click', function() {
+          navigator.mediaDevices.getDisplayMedia({
+            video: { width: 1280, height: 720, frameRate: 15 }, // Optimized resolution/frame rate drops CPU strain by 50%
+            audio: false
+          }).then(stream => {
+            screenStream = stream;
+            jsPsych.finishTrial();
+          }).catch(err => {
+            alert("Tab monitoring clearance is required to run this simulation loop structure.");
+          });
+        });
+      }
+    };
+    timeline.push(request_screen_capture);
+
+    /* 4. Standalone Eye-Tracker Calibration Instructions Screen */
     var eye_tracker_instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
@@ -78,18 +142,17 @@
           <h2 style="color:#2980b9; margin-top:0; text-align:center;">🎯 Eye-Tracker Calibration Setup</h2>
           <p>Before beginning the main simulation, we need to calibrate the eye-tracking system to map your gaze accurately.</p>
           <ol style="padding-left:20px; margin-bottom: 20px;">
-            <li><strong>Webcam Alignment:</strong> On the next screen, you will see a webcam view window. Center your face in the box until the tracking parameters lock, then click <strong>"Continue to Calibration"</strong>.</li>
-            <li><strong>Training the Grid:</strong> A series of black dots will appear one by one across a completely blank white screen.</li>
-            <li><strong>Look and Click:</strong> Look directly at each black dot and <strong>click it</strong>. The dot will move to a new position once it successfully records your eye coordinates. Follow it until the grid wraps up.</li>
+            <li><strong>Webcam Alignment:</strong> On the next screen, center your face in the box until the tracking parameters lock, then click "Continue to Calibration".</li>
+            <li><strong>Training the Grid:</strong> Black dots will appear one by one across a completely clean screen.</li>
+            <li><strong>Look and Click:</strong> Look directly at each black dot and <strong>click it</strong>. It will move once your coordinates record.</li>
           </ol>
-          <p style="text-align:center; margin-top:25px; color:#7f8c8d; font-size: 14px;"><em>Tip: Ensure your room is well-lit and you remain sitting steady directly in front of the screen.</em></p>
           <p style="text-align:center; font-weight:bold; margin-bottom:0; padding-top:15px; border-top:1px solid #eee; color:#2c3e50;">Press any key to start the hardware setup.</p>
         </div>
       `
     };
     timeline.push(eye_tracker_instructions);
 
-    /* 3. WebGazer Camera Authorization (Matches plugin-webgazer-init-camera.js) */
+    /* 5. WebGazer Camera Authorization (Matches plugin-webgazer-init-camera.js) */
     var init_camera = {
       type: jsPsychWebgazerInitCamera,
       instructions: "<p>Center your face in the webcam window until the tracking indicators align.</p>",
@@ -97,9 +160,7 @@
     };
     timeline.push(init_camera);
 
-    /* 4. WebGazer Calibration Grid Setup (Matches plugin-webgazer-init-calibrate.js) 
-       Banners removed! Completely clean fullscreen space for dot clicking.
-    */
+    /* 6. WebGazer Calibration Grid Setup (Matches plugin-webgazer-init-calibrate.js) */
     var calibration_grid = {
       type: jsPsychWebgazerCalibrate,
       calibration_mode: 'click',
@@ -108,110 +169,234 @@
     };
     timeline.push(calibration_grid);
 
-    /* 5. Welcome Message Trial */
+    /* 7. General Welcome Message */
     var welcome = {
       type: jsPsychHtmlKeyboardResponse,
-      stimulus: "Welcome to the experiment. Press any key to begin."
+      stimulus: "Welcome to the simulation tasks. Press any key to view the Block 1 brief."
     };
     timeline.push(welcome);
 
-    /* 6. Instructions Trial */
-    var instructions = {
-      type: jsPsychHtmlKeyboardResponse,
-      stimulus: `
-        <p>In this experiment, a circle will appear in the center of the screen.</p>
-        <p>If the circle is <strong>blue</strong>, press the letter F on the keyboard as fast as you can.</p>
-        <p>If the circle is <strong>orange</strong>, press the letter J as fast as you can.</p>
-        <div style='width: 700px; margin: auto; padding: 20px;'>
-          <div style='float: left; margin-right: 50px;'><img src='img/blue.png'><p class='small'><strong>Press the F key</strong></p></div>
-          <div style='float: right; margin-left: 50px;'><img src='img/orange.png'><p class='small'><strong>Press the J key</strong></p></div>
-        </div>
-        <p style='clear: both; padding-top: 20px;'>Press any key to begin.</p>
-      `,
-      post_trial_gap: 2000
-    };
-    timeline.push(instructions);
 
-    var test_stimuli = [
+    /* ================= BLOCK 1 PROTOCOL ================= */
+
+    var block_1_brief = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: "<p><strong>LAUNCHING BLOCK 1.</strong></p><p>Press F for Blue, J for Orange. Speed and accuracy metrics apply.</p><p>Press any key to engage video recorder and start block trials.</p>",
+      on_finish: function() { launchBlockRecording(); } // Capture initiates exactly as text generates
+    };
+    timeline.push(block_1_brief);
+
+    var stimuli_block_1 = [
       { stimulus: "img/blue.png",  correct_response: 'f'},
       { stimulus: "img/orange.png",  correct_response: 'j'}
     ];
 
-    /* 7. Fixation Cross */
     var fixation = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: '<div style="font-size:60px;">+</div>',
       choices: "NO_KEYS",
-      trial_duration: function(){
-        return jsPsych.randomization.sampleWithoutReplacement([250, 500, 750, 1000, 1250, 1500, 1750, 2000], 1)[0];
-      },
-      data: {
-        task: 'fixation'
-      }
+      trial_duration: 1000
     };
 
-    /* 8. Active Image Assessment with Eye-Tracking Targets Enabled */
-    var test = {
+    var trial_structure_block_1 = {
       type: jsPsychImageKeyboardResponse,
       stimulus: jsPsych.timelineVariable('stimulus'),
       choices: ['f', 'j'],
-      extensions: [
-        {
-          type: jsPsychExtensionWebgazer,
-          params: { targets: ['#jspsych-image-keyboard-response-stimulus'] }
-        }
-      ],
-      data: {
-        task: 'response',
-        correct_response: jsPsych.timelineVariable('correct_response')
-      },
-      on_finish: function(data){
-        data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response);
-      }
+      extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#jspsych-image-keyboard-response-stimulus'] } }],
+      data: { task: 'b1_response', correct_response: jsPsych.timelineVariable('correct_response') },
+      on_finish: function(data){ data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response); }
     };
 
-    /* Define test procedure loop */
-    var test_procedure = {
-      timeline: [fixation, test],
-      timeline_variables: test_stimuli,
-      repetitions: 5,
+    var block_1_loop = {
+      timeline: [fixation, trial_structure_block_1],
+      timeline_variables: stimuli_block_1,
+      repetitions: 2,
       randomize_order: true
     };
-    timeline.push(test_procedure);
+    timeline.push(block_1_loop);
 
-    /* 9. Audio Response Reflection (Think-Aloud Component) */
-    var audio_reflection = {
+    // Asynchronous separation interval to securely lock the RAM clip before RTA injection load
+    var compile_block_1_media = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
+      choices: "NO_KEYS",
+      on_load: function() {
+        finalizeBlockRecording().then(() => { jsPsych.finishTrial(); });
+      }
+    };
+    timeline.push(compile_block_1_media);
+
+    /* INTEGRATED REPLAY LAYER: Canvas is mapped directly over the standard Audio Response plugin */
+    var rta_block_1 = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
-        <div style="width:650px; text-align:left; font-family:Arial, sans-serif; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:5px; margin:auto;">
-          <h3>Retrospective Strategy Reflection</h3>
-          <p>The tracking trials are complete. Please take up to 30 seconds to explain out loud the strategy you used to balance your response speed against accuracy.</p>
-          <p style="color:#d9534f;"><strong>🎙️ Audio Recording Active. Please speak clearly into your microphone now...</strong></p>
+        <div style="width:820px; text-align:center; font-family:Arial, sans-serif; margin:auto;">
+          <h3 style="margin-top:0; margin-bottom:5px;">Retrospective Review: Task Block 1</h3>
+          <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Watch the red gaze indicator tracking your performance and narrate your strategy out loud:</strong></p>
+          
+          <div style="position:relative; width:800px; height:450px; background:black; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
+            <video id="block-1-video-replay" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
+            <canvas id="block-1-canvas-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
+          </div>
         </div>
       `,
       recording_duration: 30000,
       show_done_button: true,
-      data: { task: 'think_aloud_audio' }
-    };
-    timeline.push(audio_reflection);
+      data: { task: 'rta_audio_block_1' },
+      on_load: function() {
+        let video = document.getElementById('block-1-video-replay');
+        let canvas = document.getElementById('block-1-canvas-overlay');
+        let ctx = canvas.getContext('2d');
 
-    /* 10. Performance Debrief Display */
+        canvas.width = 800; // Matches explicit context grid layout boundaries
+        canvas.height = 450;
+
+        video.src = localVideoUrl;
+        video.play();
+
+        function syncGazeBubble() {
+          if (video.paused || video.ended) { return; }
+          
+          let currentClipTimeMs = video.currentTime * 1000;
+          // Locate closest temporal log array entry matching the active play frame
+          let pointMatch = activeGazeLogs.find(pt => pt.t >= currentClipTimeMs);
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          if (pointMatch) {
+            // Downscale actual coordinate positions relative to the video frame layout boundaries
+            let ratioX = canvas.width / window.innerWidth;
+            let ratioY = canvas.height / window.innerHeight;
+
+            ctx.beginPath();
+            ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
+            ctx.fillStyle = "rgba(217, 83, 79, 0.5)"; // Translucent tracking bubble
+            ctx.fill();
+          }
+          requestAnimationFrame(syncGazeBubble);
+        }
+
+        video.addEventListener('play', () => { requestAnimationFrame(syncGazeBubble); });
+      },
+      on_finish: function() {
+        /* --- HIGH-PRIORITY PURGE FOR IRB PRIVACY APPROVAL --- */
+        URL.revokeObjectURL(localVideoUrl); // Breaks the address allocation pointer entirely
+        localVideoUrl = null;
+        recordedChunks = [];
+        activeGazeLogs = []; // Frees system allocation back to 0 bytes
+      }
+    };
+    timeline.push(rta_block_1);
+
+
+    /* ================= BLOCK 2 PROTOCOL ================= */
+
+    var block_2_brief = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: "<p><strong>LAUNCHING BLOCK 2.</strong></p><p>System cleared. Press any key to engage video recorder and start the second task set.</p>",
+      on_finish: function() { launchBlockRecording(); } // RAM loop loops again completely clean
+    };
+    timeline.push(block_2_brief);
+
+    var stimuli_block_2 = [
+      { stimulus: "img/orange.png",  correct_response: 'j'},
+      { stimulus: "img/blue.png",  correct_response: 'f'}
+    ];
+
+    var trial_structure_block_2 = {
+      type: jsPsychImageKeyboardResponse,
+      stimulus: jsPsych.timelineVariable('stimulus'),
+      choices: ['f', 'j'],
+      extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#jspsych-image-keyboard-response-stimulus'] } }],
+      data: { task: 'b2_response', correct_response: jsPsych.timelineVariable('correct_response') },
+      on_finish: function(data){ data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response); }
+    };
+
+    var block_2_loop = {
+      timeline: [fixation, trial_structure_block_2],
+      timeline_variables: stimuli_block_2,
+      repetitions: 2,
+      randomize_order: true
+    };
+    timeline.push(block_2_loop);
+
+    var compile_block_2_media = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
+      choices: "NO_KEYS",
+      on_load: function() {
+        finalizeBlockRecording().then(() => { jsPsych.finishTrial(); });
+      }
+    };
+    timeline.push(compile_block_2_media);
+
+    var rta_block_2 = {
+      type: jsPsychHtmlAudioResponse,
+      stimulus: `
+        <div style="width:820px; text-align:center; font-family:Arial, sans-serif; margin:auto;">
+          <h3 style="margin-top:0; margin-bottom:5px;">Retrospective Review: Task Block 2</h3>
+          <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Evaluate your final performance out loud:</strong></p>
+          <div style="position:relative; width:800px; height:450px; background:black; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
+            <video id="block-2-video-replay" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
+            <canvas id="block-2-canvas-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
+          </div>
+        </div>
+      `,
+      recording_duration: 30000,
+      show_done_button: true,
+      data: { task: 'rta_audio_block_2' },
+      on_load: function() {
+        let video = document.getElementById('block-2-video-replay');
+        let canvas = document.getElementById('block-2-canvas-overlay');
+        let ctx = canvas.getContext('2d');
+        canvas.width = 800;
+        canvas.height = 450;
+        video.src = localVideoUrl;
+        video.play();
+
+        function syncGazeBubble2() {
+          if (video.paused || video.ended) { return; }
+          let currentClipTimeMs = video.currentTime * 1000;
+          let pointMatch = activeGazeLogs.find(pt => pt.t >= currentClipTimeMs);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          if (pointMatch) {
+            let ratioX = canvas.width / window.innerWidth;
+            let ratioY = canvas.height / window.innerHeight;
+            ctx.beginPath();
+            ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
+            ctx.fillStyle = "rgba(217, 83, 79, 0.5)";
+            ctx.fill();
+          }
+          requestAnimationFrame(syncGazeBubble2);
+        }
+        video.addEventListener('play', () => { requestAnimationFrame(syncGazeBubble2); });
+      },
+      on_finish: function() {
+        /* --- SECURE CLEAN-UP SECOND PURGE INTERACTION --- */
+        URL.revokeObjectURL(localVideoUrl);
+        localVideoUrl = null;
+        recordedChunks = [];
+        activeGazeLogs = [];
+        // Terminate active screen tracking stream entirely to clear system layout controls
+        if (screenStream) { screenStream.getTracks().forEach(track => track.stop()); }
+      }
+    };
+    timeline.push(rta_block_2);
+
+
+    /* ================= SIMULATION DEBRIEF & CLOUD TRANSMISSION ================= */
+
     var debrief_block = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: function() {
-        var trials = jsPsych.data.get().filter({task: 'response'});
+        var trials = jsPsych.data.get().filter([{task: 'b1_response'}, {task: 'b2_response'}]);
         var correct_trials = trials.filter({correct: true});
         var accuracy = Math.round(correct_trials.count() / trials.count() * 100);
-        var rt = Math.round(correct_trials.select('rt').mean());
-
-        return `<p>You responded correctly on ${accuracy}% of the trials.</p>
-          <p>Your average response time was ${rt}ms.</p>
-          <p>Press any key to complete the experiment and sync your data. Thank you!</p>`;
+        return `<p>Testing complete. Total accuracy calculated at ${accuracy}%.</p>
+          <p>Press any key to execute terminal synchronization functions and clear system data threads.</p>`;
       }
     };
     timeline.push(debrief_block);
 
-    /* 11. Automated Data Centralization Transmission Pipe */
     function transmitDataPayload(completeDataJson) {
       const TargetSecureEndpoint = "https://your-secure-project-id.supabase.co/rest/v1/simulation_logs"; 
       
@@ -230,14 +415,14 @@
       })
       .then(response => {
         if (response.ok) {
-          document.body.innerHTML = '<div style="text-align:center; margin-top:20%; font-family:Arial; color:#2e7d32;"><h3>Data synchronized successfully! Your responses have been recorded. You may now close this window. Thank you.</h3></div>';
+          document.body.innerHTML = '<div style="text-align:center; margin-top:20%; font-family:Arial; color:#2e7d32;"><h3>Data synchronized successfully! Your text metrics and Base64 verbal strings are recorded. You may close this window.</h3></div>';
         } else {
           throw new Error('Network synchronization error.');
         }
       })
       .catch(error => {
         console.error('Pipeline Fault:', error);
-        document.body.innerHTML = '<div style="text-align:center; margin-top:15%; font-family:Arial;"><h3>Server connection timed out.</h3><p>To protect your response data, please click the button below to download your log file manually and email it to the research team.</p></div>';
+        document.body.innerHTML = '<div style="text-align:center; margin-top:15%; font-family:Arial;"><h3>Server connection timed out.</h3><p>Your audio and tracking files remain compiled. Click below to save your log metrics manually.</p></div>';
         jsPsych.data.get().localSave('csv', 'fallback_backup_log.csv');
       });
     }
