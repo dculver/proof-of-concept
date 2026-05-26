@@ -47,7 +47,6 @@
       recordedChunks = [];
       activeGazeLogs = [];
       
-      // Adaptive MIME-Type checking prevents DOMExceptions across Windows and Mac environments
       let options = {};
       if (typeof MediaRecorder.isTypeSupported === 'function') {
         if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
@@ -65,7 +64,8 @@
       };
       
       recordingStartTime = performance.now();
-      mediaRecorder.start();
+      // Passing a 1000ms timeslice forces regular cache flushes to the memory buffer
+      mediaRecorder.start(1000); 
       isRecordingActive = true;
 
       // Safe Polling Loop: Logs coordinates without clearing jsPsych's global tracking listeners
@@ -245,6 +245,7 @@
     };
     timeline.push(compile_block_1_media);
 
+    /* INTEGRATED REPLAY LAYER: Configured with muted autoplay elements to prevent DOM policy crashes */
     var rta_block_1 = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
@@ -253,7 +254,7 @@
           <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Watch the red gaze indicator tracking your performance and narrate your strategy out loud:</strong></p>
           
           <div style="position:relative; width:800px; height:450px; background:black; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
-            <video id="block-1-video-replay" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
+            <video id="block-1-video-replay" muted autoplay playsinline style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
             <canvas id="block-1-canvas-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
           </div>
         </div>
@@ -270,23 +271,35 @@
         canvas.height = 450;
 
         video.src = localVideoUrl;
-        video.play();
+
+        // O(1) Sequential Tracking Pointer prevents framework browser lags
+        let gazeIndex = 0;
 
         function syncGazeBubble() {
-          if (video.paused || video.ended) { return; }
+          if (!video || video.ended) return;
           
           let currentClipTimeMs = video.currentTime * 1000;
-          let pointMatch = activeGazeLogs.find(pt => pt.t >= currentClipTimeMs);
+
+          // Advance the tracking index pointer sequentially to match current video time
+          while (gazeIndex < activeGazeLogs.length && activeGazeLogs[gazeIndex].t < currentClipTimeMs) {
+            gazeIndex++;
+          }
 
           ctx.clearRect(0, 0, canvas.width, canvas.height);
-          if (pointMatch) {
-            let ratioX = canvas.width / window.innerWidth;
-            let ratioY = canvas.height / window.innerHeight;
+          
+          if (gazeIndex > 0 && gazeIndex <= activeGazeLogs.length) {
+            let pointMatch = activeGazeLogs[gazeIndex - 1];
+            
+            // Only paint coordinates if they match the active 300ms playback frame window
+            if (currentClipTimeMs - pointMatch.t < 300) {
+              let ratioX = canvas.width / window.innerWidth;
+              let ratioY = canvas.height / window.innerHeight;
 
-            ctx.beginPath();
-            ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
-            ctx.fillStyle = "rgba(217, 83, 79, 0.5)"; 
-            ctx.fill();
+              ctx.beginPath();
+              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
+              ctx.fillStyle = "rgba(217, 83, 79, 0.6)"; 
+              ctx.fill();
+            }
           }
           requestAnimationFrame(syncGazeBubble);
         }
@@ -351,7 +364,7 @@
           <h3 style="margin-top:0; margin-bottom:5px;">Retrospective Review: Task Block 2</h3>
           <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Evaluate your final performance out loud:</strong></p>
           <div style="position:relative; width:800px; height:450px; background:black; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
-            <video id="block-2-video-replay" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
+            <video id="block-2-video-replay" muted autoplay playsinline style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
             <canvas id="block-2-canvas-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
           </div>
         </div>
@@ -366,20 +379,30 @@
         canvas.width = 800;
         canvas.height = 450;
         video.src = localVideoUrl;
-        video.play();
+
+        let gazeIndex2 = 0;
 
         function syncGazeBubble2() {
-          if (video.paused || video.ended) { return; }
+          if (!video || video.ended) return;
+          
           let currentClipTimeMs = video.currentTime * 1000;
-          let pointMatch = activeGazeLogs.find(pt => pt.t >= currentClipTimeMs);
+          
+          while (gazeIndex2 < activeGazeLogs.length && activeGazeLogs[gazeIndex2].t < currentClipTimeMs) {
+            gazeIndex2++;
+          }
+
           ctx.clearRect(0, 0, canvas.width, canvas.height);
-          if (pointMatch) {
-            let ratioX = canvas.width / window.innerWidth;
-            let ratioY = canvas.height / window.innerHeight;
-            ctx.beginPath();
-            ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
-            ctx.fillStyle = "rgba(217, 83, 79, 0.5)";
-            ctx.fill();
+          
+          if (gazeIndex2 > 0 && gazeIndex2 <= activeGazeLogs.length) {
+            let pointMatch = activeGazeLogs[gazeIndex2 - 1];
+            if (currentClipTimeMs - pointMatch.t < 300) {
+              let ratioX = canvas.width / window.innerWidth;
+              let ratioY = canvas.height / window.innerHeight;
+              ctx.beginPath();
+              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
+              ctx.fillStyle = "rgba(217, 83, 79, 0.6)";
+              ctx.fill();
+            }
           }
           requestAnimationFrame(syncGazeBubble2);
         }
