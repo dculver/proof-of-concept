@@ -25,9 +25,8 @@
     let mediaRecorder = null;
     let recordedChunks = [];
     let localVideoUrl = null;
-    let recordingStartTime = 0;
+    let blockStartJsPsychTime = 0; // Universal clock anchor for synchronization
     let activeGazeLogs = []; 
-    let isRecordingActive = false;
 
     // Automated interception framework to map video style parameters safely
     if (window.webgazer && typeof webgazer.showVideo === 'function') {
@@ -42,7 +41,7 @@
       };
     }
 
-    // Helper: Turn on screen encoding and engage non-destructive tracking loop
+    // Helper: Turn on screen encoding and log block baseline clock metrics
     function launchBlockRecording() {
       recordedChunks = [];
       activeGazeLogs = [];
@@ -63,36 +62,42 @@
         if (e.data && e.data.size > 0) { recordedChunks.push(e.data); }
       };
       
-      recordingStartTime = performance.now();
-      // Passing a 1000ms timeslice forces regular cache flushes to the memory buffer
+      // Capture the exact timeline moment this block's media recorder begins
+      blockStartJsPsychTime = jsPsych.getTotalTime();
       mediaRecorder.start(1000); 
-      isRecordingActive = true;
-
-      // Safe Polling Loop: Logs coordinates without clearing jsPsych's global tracking listeners
-      function trackCurrentGazeFrame() {
-        if (!isRecordingActive) return;
-        if (window.webgazer) {
-          let prediction = webgazer.getCurrentPrediction();
-          if (prediction) {
-            activeGazeLogs.push({
-              x: prediction.x,
-              y: prediction.y,
-              t: performance.now() - recordingStartTime
-            });
-          }
-        }
-        requestAnimationFrame(trackCurrentGazeFrame);
-      }
-      requestAnimationFrame(trackCurrentGazeFrame);
     }
 
-    // Helper: Halt screen recording and lock the RAM Blob reference link
-    function finalizeBlockRecording() {
+    // Helper: Halt screen recording and reconstruct coordinates deterministically from cache
+    function finalizeBlockRecording(blockTaskLabel) {
       return new Promise((resolve) => {
-        isRecordingActive = false;
         mediaRecorder.onstop = function() {
           let videoBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
           localVideoUrl = URL.createObjectURL(videoBlob);
+          
+          // POST-TRIAL EXTRACTION: Rebuild the tracking coordinates array from verified data
+          activeGazeLogs = [];
+          let blockTrials = jsPsych.data.get().filter({ task: blockTaskLabel }).values();
+          
+          blockTrials.forEach(trial => {
+            if (trial.webgazer_data) {
+              let gazeData = typeof trial.webgazer_data === 'string' ? JSON.parse(trial.webgazer_data) : trial.webgazer_data;
+              
+              // Map when this specific trial screen appeared relative to our video start frame
+              let trialStartInExperiment = trial.time_elapsed - trial.rt;
+              let trialVideoOffset = trialStartInExperiment - blockStartJsPsychTime;
+              
+              gazeData.forEach(point => {
+                activeGazeLogs.push({
+                  x: point.x,
+                  y: point.y,
+                  t: trialVideoOffset + point.t // Accurate synchronization timeline marker
+                });
+              });
+            }
+          });
+          
+          // Sort coordinates sequentially to optimize pointer lookup performance
+          activeGazeLogs.sort((a, b) => a.t - b.t);
           resolve();
         };
         mediaRecorder.stop();
@@ -126,7 +131,7 @@
     };
     timeline.push(init_mic);
 
-    /* 3. Screen Share Capture Setup (Fires prompt before eye tracker instructions) */
+    /* 3. Screen Share Capture Setup */
     var request_screen_capture = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
@@ -158,7 +163,7 @@
     var eye_tracker_instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
-        <div style="width:650px; text-align:left; font-family:Arial, sans-serif; line-height:1.6; margin:auto; background:#f9f9f9; padding:30px; border:1px solid #ddd; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+        <div style="width:650px; text-align:left; font-family:Arial, sans-serif; line-height:1.6; margin:auto; background:#f9f9f9; padding:30px; border:1px solid #ddd; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.05);\">
           <h2 style="color:#2980b9; margin-top:0; text-align:center;">🎯 Eye-Tracker Calibration Setup</h2>
           <p>Before beginning the main simulation, we need to calibrate the eye-tracking system to map your gaze accurately.</p>
           <ol style="padding-left:20px; margin-bottom: 20px;">
@@ -172,7 +177,7 @@
     };
     timeline.push(eye_tracker_instructions);
 
-    /* 5. WebGazer Camera Authorization (Matches plugin-webgazer-init-camera.js) */
+    /* 5. WebGazer Camera Authorization */
     var init_camera = {
       type: jsPsychWebgazerInitCamera,
       instructions: "<p>Center your face in the webcam window until the tracking indicators align.</p>",
@@ -180,7 +185,7 @@
     };
     timeline.push(init_camera);
 
-    /* 6. WebGazer Calibration Grid Setup (Matches plugin-webgazer-init-calibrate.js) */
+    /* 6. WebGazer Calibration Grid Setup */
     var calibration_grid = {
       type: jsPsychWebgazerCalibrate,
       calibration_mode: 'click',
@@ -240,12 +245,12 @@
       stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
       choices: "NO_KEYS",
       on_load: function() {
-        finalizeBlockRecording().then(() => { jsPsych.finishTrial(); });
+        // Stop the recorder and assemble the eye tracking data using the block target string
+        finalizeBlockRecording('b1_response').then(() => { jsPsych.finishTrial(); });
       }
     };
     timeline.push(compile_block_1_media);
 
-    /* INTEGRATED REPLAY LAYER: Configured with muted autoplay elements to prevent DOM policy crashes */
     var rta_block_1 = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
@@ -271,16 +276,22 @@
         canvas.height = 450;
 
         video.src = localVideoUrl;
+        
+        // Defensive exception handling blocks async browser media rejections
+        video.play().catch(function(err) {
+          console.log("Safe Fallback: Browser delayed direct execution. Inline attributes handling playback stream.");
+        });
 
-        // O(1) Sequential Tracking Pointer prevents framework browser lags
         let gazeIndex = 0;
 
         function syncGazeBubble() {
-          if (!video || video.ended) return;
+          if (!video || video.paused || video.ended) {
+            requestAnimationFrame(syncGazeBubble);
+            return;
+          }
           
           let currentClipTimeMs = video.currentTime * 1000;
 
-          // Advance the tracking index pointer sequentially to match current video time
           while (gazeIndex < activeGazeLogs.length && activeGazeLogs[gazeIndex].t < currentClipTimeMs) {
             gazeIndex++;
           }
@@ -290,14 +301,13 @@
           if (gazeIndex > 0 && gazeIndex <= activeGazeLogs.length) {
             let pointMatch = activeGazeLogs[gazeIndex - 1];
             
-            // Only paint coordinates if they match the active 300ms playback frame window
-            if (currentClipTimeMs - pointMatch.t < 300) {
+            if (currentClipTimeMs - pointMatch.t < 400) {
               let ratioX = canvas.width / window.innerWidth;
               let ratioY = canvas.height / window.innerHeight;
 
               ctx.beginPath();
-              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(217, 83, 79, 0.6)"; 
+              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
+              ctx.fillStyle = "rgba(217, 83, 79, 0.65)"; 
               ctx.fill();
             }
           }
@@ -352,7 +362,7 @@
       stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
       choices: "NO_KEYS",
       on_load: function() {
-        finalizeBlockRecording().then(() => { jsPsych.finishTrial(); });
+        finalizeBlockRecording('b2_response').then(() => { jsPsych.finishTrial(); });
       }
     };
     timeline.push(compile_block_2_media);
@@ -378,12 +388,20 @@
         let ctx = canvas.getContext('2d');
         canvas.width = 800;
         canvas.height = 450;
+        
         video.src = localVideoUrl;
+        
+        video.play().catch(function(err) {
+          console.log("Safe Fallback: Browser delayed direct execution. Inline attributes handling playback stream.");
+        });
 
         let gazeIndex2 = 0;
 
         function syncGazeBubble2() {
-          if (!video || video.ended) return;
+          if (!video || video.paused || video.ended) {
+            requestAnimationFrame(syncGazeBubble2);
+            return;
+          }
           
           let currentClipTimeMs = video.currentTime * 1000;
           
@@ -395,12 +413,12 @@
           
           if (gazeIndex2 > 0 && gazeIndex2 <= activeGazeLogs.length) {
             let pointMatch = activeGazeLogs[gazeIndex2 - 1];
-            if (currentClipTimeMs - pointMatch.t < 300) {
+            if (currentClipTimeMs - pointMatch.t < 400) {
               let ratioX = canvas.width / window.innerWidth;
               let ratioY = canvas.height / window.innerHeight;
               ctx.beginPath();
-              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(217, 83, 79, 0.6)";
+              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
+              ctx.fillStyle = "rgba(217, 83, 79, 0.65)";
               ctx.fill();
             }
           }
