@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <title>Multimodal Proof of Concept Simulation</title>
     <script src="js/jspsych.js"></script>
     <link href="js/jspsych.css" rel="stylesheet" type="text/css" />
@@ -11,7 +11,8 @@
 
     <script src="js/webgazer.js"></script>
     <script src="js/extension-webgazer.js"></script>
-    <script src="js/plugin-webgazer-init-calibration.js"></script>
+    <script src="js/plugin-webgazer-init-camera.js"></script>
+    <script src="js/plugin-webgazer-init-calibrate.js"></script>
 
     <script src="js/plugin-initialize-microphone.js"></script>
     <script src="js/plugin-html-audio-response.js"></script>
@@ -43,29 +44,37 @@
     timeline.push(preload);
 
     /* 2. Hardware Access: Safe Audio Request Initialization */
-    // Prompts microphone validation immediately so browser security clearances don't break the trial flow later
     var init_mic = {
       type: jsPsychInitializeMicrophone,
       error_message: "<p>Microphone access is required to participate in this study. Please check your browser settings and refresh.</p>"
     };
     timeline.push(init_mic);
 
-    /* 3. Hardware Access: WebGazer Setup and Validation Grid */
-    var init_camera_and_calibration = {
-      type: jsPsychWebgazerInitCalibration,
-      calibration_instructions: "<p>Center your face in the webcam view window. Click on each of the points that appear on the grid until they turn green to synchronize eye tracking.</p>",
-      validation_instructions: "<p>Now, look at the black dots to verify eye-tracking accuracy across the coordinates.</p>"
+    /* 3. Hardware Access: WebGazer Camera Authorization & Initialization */
+    var init_camera = {
+      type: jsPsychWebgazerInitCamera,
+      instructions: "<p>Center your face in the webcam window until the tracking indicators align.</p>",
+      button_text: "Continue to Calibration"
     };
-    timeline.push(init_camera_and_calibration);
+    timeline.push(init_camera);
 
-    /* 4. Welcome Screen */
+    /* 4. Hardware Access: Synchronize Gaze Calibration Points Matrix */
+    var calibration_grid = {
+      type: jsPsychWebgazerCalibrate,
+      calibration_mode: 'click',
+      calibration_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
+      point_size: 20
+    };
+    timeline.push(calibration_grid);
+
+    /* 5. Welcome Screen */
     var welcome = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: "System cleared. Welcome to the simulation. Press any key to begin instructions."
     };
     timeline.push(welcome);
 
-    /* 5. Instructional Protocol */
+    /* 6. Instructional Protocol */
     var instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
@@ -92,12 +101,11 @@
       }
     };
 
-    /* 6. Active Stimulus Assessment with Eye-Tracking Targets */
+    /* 7. Active Stimulus Assessment with Eye-Tracking Targets */
     var test_trial = {
       type: jsPsychImageKeyboardResponse,
       stimulus: jsPsych.timelineVariable('stimulus'),
       choices: ['f', 'j'],
-      // We instruct WebGazer exactly what DOM element to watch for gaze points
       extensions: [
         {
           type: jsPsychExtensionWebgazer, 
@@ -121,8 +129,7 @@
     };
     timeline.push(test_procedure);
 
-    /* 7. Unmoderated Retrospective Think-Aloud Segment */
-    // Immediately plays back a reflection state and triggers native microphone streaming audio back to data log
+    /* 8. Unmoderated Retrospective Think-Aloud Segment */
     var retrospective_reflection = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
@@ -138,9 +145,8 @@
     };
     timeline.push(retrospective_reflection);
 
-    /* 8. Script to Pipeline Data Centrally via Secure Web Hook */
+    /* 9. Script to Pipeline Data Centrally via Secure Web Hook */
     function transmitDataPayload(completeDataJson) {
-      // Secure URL location targeting your backend serverless database API
       const TargetSecureEndpoint = "https://your-secure-project-id.supabase.co/rest/v1/simulation_logs"; 
       
       fetch(TargetSecureEndpoint, {
@@ -165,7 +171,6 @@
       })
       .catch(error => {
         console.error('Pipeline Fault:', error);
-        // Fail-safe protection: if backend fails, force a local fallback option so research data is never destroyed
         document.body.innerHTML = '<div style="text-align:center; margin-top:15%; font-family:Arial;"><h3>Server connection timed out.</h3><p>To protect your response data, please click the button below to download your log file manually and email it to the research team.</p></div>';
         jsPsych.data.get().localSave('csv', 'fallback_backup_log.csv');
       });
