@@ -20,14 +20,12 @@
   <body></body>
   <script>
 
-    /* --- VOLATILE DATA RECORDING INFRASTRUCTURE FOR IRB PRIVACY COMPLIANCE --- */
-    let screenStream = null;
-    let mediaRecorder = null;
-    let recordedChunks = [];
-    let localVideoUrl = null;
-    let recordingStartTime = 0;
-    let activeGazeLogs = []; 
-    let blockTrialStartTimes = []; // Universal high-resolution timing array for sync mapping
+    /* --- VOLATILE DATA STORAGE FOR TIMELINE REENACTMENT --- */
+    let playbackTimeline = [];
+    let playbackGazePoints = [];
+    let totalPlaybackDuration = 0;
+    let playbackStartTime = 0;
+    let isPlaybackActive = false;
 
     // Automated interception framework to map video style parameters safely
     if (window.webgazer && typeof webgazer.showVideo === 'function') {
@@ -42,64 +40,48 @@
       };
     }
 
-    // Helper: Turn on screen encoding and log block baseline clock metrics via native API
-    function launchBlockRecording() {
-      recordedChunks = [];
-      activeGazeLogs = [];
-      blockTrialStartTimes = []; 
-      
-      let options = {};
-      if (typeof MediaRecorder.isTypeSupported === 'function') {
-        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-          options = { mimeType: 'video/webm;codecs=vp8' };
-        } else if (MediaRecorder.isTypeSupported('video/webm')) {
-          options = { mimeType: 'video/webm' };
-        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-          options = { mimeType: 'video/mp4' };
-        }
-      }
-      
-      mediaRecorder = new MediaRecorder(screenStream, options);
-      mediaRecorder.ondataavailable = function(e) {
-        if (e.data && e.data.size > 0) { recordedChunks.push(e.data); }
-      };
-      
-      recordingStartTime = performance.now(); // Universal zero-anchor baseline
-      mediaRecorder.start(1000); 
-    }
+    // Helper: Processes trial logs to construct a deterministic replay timeline
+    function buildPlaybackTimeline(blockTaskLabel) {
+      playbackTimeline = [];
+      playbackGazePoints = [];
+      let currentOffset = 0;
 
-    // Helper: Halt screen recording and reconstruct coordinates deterministically from cache
-    function finalizeBlockRecording(blockTaskLabel) {
-      return new Promise((resolve) => {
-        mediaRecorder.onstop = function() {
-          let videoBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
-          localVideoUrl = URL.createObjectURL(videoBlob);
-          
-          activeGazeLogs = [];
-          let blockTrials = jsPsych.data.get().filter({ task: blockTaskLabel }).values();
-          
-          // Rebuild coordinate arrays by mapping index locations across the timing array
-          for (let i = 0; i < blockTrials.length; i++) {
-            let trial = blockTrials[i];
-            if (trial.webgazer_data && blockTrialStartTimes[i]) {
-              let trialVideoOffset = blockTrialStartTimes[i] - recordingStartTime;
-              let gazeData = typeof trial.webgazer_data === 'string' ? JSON.parse(trial.webgazer_data) : trial.webgazer_data;
-              
-              gazeData.forEach(point => {
-                activeGazeLogs.push({
-                  x: point.x,
-                  y: point.y,
-                  t: trialVideoOffset + point.t 
-                });
-              });
-            }
-          }
-          
-          activeGazeLogs.sort((a, b) => a.t - b.t);
-          resolve();
-        };
-        mediaRecorder.stop();
+      // Extract raw trial data logged natively by jsPsych
+      let blockTrials = jsPsych.data.get().filter({ task: blockTaskLabel }).values();
+      
+      blockTrials.forEach(trial => {
+        // 1. Reconstruct the Fixation cross period (1000ms)
+        playbackTimeline.push({
+          startTime: currentOffset,
+          endTime: currentOffset + 1000,
+          type: 'fixation'
+        });
+        currentOffset += 1000;
+
+        // 2. Reconstruct the Stimulus presentation period (matching user reaction latency)
+        playbackTimeline.push({
+          startTime: currentOffset,
+          endTime: currentOffset + trial.rt,
+          type: 'stimulus',
+          src: trial.stimulus
+        });
+
+        // 3. Extract and synchronize the eye-gaze coordinate logs
+        if (trial.webgazer_data) {
+          let gazeData = typeof trial.webgazer_data === 'string' ? JSON.parse(trial.webgazer_data) : trial.webgazer_data;
+          gazeData.forEach(point => {
+            playbackGazePoints.push({
+              x: point.x,
+              y: point.y,
+              t: currentOffset + point.t // Re-indexed time marker relative to replay zero-point
+            });
+          });
+        }
+        currentOffset += trial.rt;
       });
+
+      totalPlaybackDuration = currentOffset;
+      playbackGazePoints.sort((a, b) => a.t - b.t);
     }
 
     /* Initialize jsPsych with the WebGazer Extension active */
@@ -129,35 +111,7 @@
     };
     timeline.push(init_mic);
 
-    /* 3. Screen Share Capture Setup */
-    var request_screen_capture = {
-      type: jsPsychHtmlKeyboardResponse,
-      stimulus: `
-        <div style="width:600px; text-align:left; font-family:Arial, sans-serif; line-height:1.6; margin:auto; background:#f9f9f9; padding:30px; border:1px solid #ddd; border-radius:8px;">
-          <h2 style="color:#2980b9; margin-top:0; text-align:center;">🖥️ Local Replay Interface Activation</h2>
-          <p>To enable the gaze-cued retrospective video review without transmitting any video over the network, your browser requires permission to monitor this execution tab.</p>
-          <p><strong>Instructions:</strong> Click the button below, choose <strong>"This Tab"</strong> (or Current Tab) from the pop-up options panel, and click <strong>Share</strong>.</p>
-          <button id="authorize-capture-btn" style="display:block; margin:25px auto 0; padding:12px 24px; background:#2980b9; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:15px;">Authorize Replay Mode</button>
-        </div>
-      `,
-      choices: "NO_KEYS",
-      on_load: function() {
-        document.getElementById('authorize-capture-btn').addEventListener('click', function() {
-          navigator.mediaDevices.getDisplayMedia({
-            video: { width: 1280, height: 720, frameRate: 15 }, 
-            audio: false
-          }).then(stream => {
-            screenStream = stream;
-            jsPsych.finishTrial();
-          }).catch(err => {
-            alert("Tab monitoring clearance is required to run this simulation loop structure.");
-          });
-        });
-      }
-    };
-    timeline.push(request_screen_capture);
-
-    /* 4. Standalone Eye-Tracker Calibration Instructions Screen */
+    /* 3. Eye-Tracker Calibration Instructions Screen */
     var eye_tracker_instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
@@ -175,7 +129,7 @@
     };
     timeline.push(eye_tracker_instructions);
 
-    /* 5. WebGazer Camera Authorization */
+    /* 4. WebGazer Camera Authorization */
     var init_camera = {
       type: jsPsychWebgazerInitCamera,
       instructions: "<p>Center your face in the webcam window until the tracking indicators align.</p>",
@@ -183,7 +137,7 @@
     };
     timeline.push(init_camera);
 
-    /* 6. WebGazer Calibration Grid Setup */
+    /* 5. WebGazer Calibration Grid Setup */
     var calibration_grid = {
       type: jsPsychWebgazerCalibrate,
       calibration_mode: 'click',
@@ -192,7 +146,7 @@
     };
     timeline.push(calibration_grid);
 
-    /* 7. General Welcome Message */
+    /* 6. General Welcome Message */
     var welcome = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: "Welcome to the simulation tasks. Press any key to view the Block 1 brief."
@@ -204,8 +158,7 @@
 
     var block_1_brief = {
       type: jsPsychHtmlKeyboardResponse,
-      stimulus: "<p><strong>LAUNCHING BLOCK 1.</strong></p><p>Press F for Blue, J for Orange. Speed and accuracy metrics apply.</p><p>Press any key to engage video recorder and start block trials.</p>",
-      on_finish: function() { launchBlockRecording(); } 
+      stimulus: "<p><strong>LAUNCHING BLOCK 1.</strong></p><p>Press F for Blue, J for Orange. Speed and accuracy metrics apply.</p><p>Press any key to start block trials.</p>"
     };
     timeline.push(block_1_brief);
 
@@ -227,9 +180,6 @@
       choices: ['f', 'j'],
       extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#jspsych-image-keyboard-response-stimulus'] } }],
       data: { task: 'b1_response', correct_response: jsPsych.timelineVariable('correct_response') },
-      on_load: function() {
-        blockTrialStartTimes.push(performance.now());
-      },
       on_finish: function(data){ data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response); }
     };
 
@@ -241,16 +191,19 @@
     };
     timeline.push(block_1_loop);
 
+    // Compiles logs instantly from memory cache rather than waiting for an asynchronous hardware handler
     var compile_block_1_media = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
       choices: "NO_KEYS",
-      on_load: function() {
-        finalizeBlockRecording('b1_response').then(() => { jsPsych.finishTrial(); });
+      trial_duration: 800,
+      on_finish: function() {
+        buildPlaybackTimeline('b1_response');
       }
     };
     timeline.push(compile_block_1_media);
 
+    /* HIGH-STABILITY RETROSPECTIVE TRIAL LAYER: Animates code structures natively over the Canvas frame */
     var rta_block_1 = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
@@ -258,9 +211,9 @@
           <h3 style="margin-top:0; margin-bottom:5px;">Retrospective Review: Task Block 1</h3>
           <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Watch the red gaze indicator tracking your performance and narrate your strategy out loud:</strong></p>
           
-          <div style="position:relative; width:800px; height:450px; background:black; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
-            <video id="block-1-video-replay" muted autoplay playsinline style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
-            <canvas id="block-1-canvas-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
+          <div style="position:relative; width:800px; height:450px; background:#f5f5f5; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
+            <div id="block-1-stimulus-display" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); display:flex; align-items:center; justify-content:center;"></div>
+            <canvas id="block-1-gaze-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
           </div>
         </div>
       `,
@@ -268,69 +221,68 @@
       show_done_button: true,
       data: { task: 'rta_audio_block_1' },
       on_load: function() {
-        let video = document.getElementById('block-1-video-replay');
-        if (!video) return;
+        playbackStartTime = performance.now();
+        isPlaybackActive = true;
 
-        video.src = localVideoUrl;
-        
-        // Native event listener guarantees metadata initialization before triggering execution
-        video.addEventListener('canplay', function() {
-          video.play().catch(function(err) {
-            console.log("Autoplay handled natively by inline compliance layout attributes.");
-          });
-        });
-
-        function syncGazeBubble() {
-          // BULLETPROOF DYNAMIC POLLING: Continuously re-fetches references live inside the active frame
-          let liveVideo = document.getElementById('block-1-video-replay');
-          let liveCanvas = document.getElementById('block-1-canvas-overlay');
+        function renderReplayLoop() {
+          let display = document.getElementById('block-1-stimulus-display');
+          let canvas = document.getElementById('block-1-gaze-overlay');
           
-          // If the elements are missing, break the animation loop context instantly
-          if (!liveVideo || !liveCanvas) return;
+          // Safety Bailout: Halts the animation thread immediately if user transitions past screen
+          if (!display || !canvas || !isPlaybackActive) return;
 
-          if (liveVideo.paused || liveVideo.ended) {
-            requestAnimationFrame(syncGazeBubble);
-            return;
+          let elapsed = performance.now() - playbackStartTime;
+
+          // If the timeline finishes, auto-loop back to zero to maintain presentation until narration ends
+          if (elapsed > totalPlaybackDuration) {
+            playbackStartTime = performance.now();
+            elapsed = 0;
           }
-          
-          let ctx = liveCanvas.getContext('2d');
-          if (!ctx) return;
 
-          liveCanvas.width = 800; 
-          liveCanvas.height = 450;
+          // 1. Re-render display elements based on time offset receipts
+          let currentState = playbackTimeline.find(state => elapsed >= state.startTime && elapsed < state.endTime);
+          if (currentState) {
+            if (currentState.type === 'fixation') {
+              display.innerHTML = '<div style="font-size:60px; font-family:Arial; color:#333;">+</div>';
+            } else {
+              display.innerHTML = `<img src="${currentState.src}" style="height:200px; width:auto; object-fit:contain;" />`;
+            }
+          } else {
+            display.innerHTML = '';
+          }
 
-          let currentClipTimeMs = liveVideo.currentTime * 1000;
-          let gazeIndex = 0; 
+          // 2. Map eye-gaze coordinates over the display frame canvas context
+          let ctx = canvas.getContext('2d');
+          canvas.width = 800;
+          canvas.height = 450;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-          while (gazeIndex < activeGazeLogs.length && activeGazeLogs[gazeIndex].t < currentClipTimeMs) {
+          let gazeIndex = 0;
+          while (gazeIndex < playbackGazePoints.length && playbackGazePoints[gazeIndex].t < elapsed) {
             gazeIndex++;
           }
 
-          ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-          
-          if (gazeIndex > 0 && gazeIndex <= activeGazeLogs.length) {
-            let pointMatch = activeGazeLogs[gazeIndex - 1];
-            
-            if (currentClipTimeMs - pointMatch.t < 400) {
-              let ratioX = liveCanvas.width / window.innerWidth;
-              let ratioY = liveCanvas.height / window.innerHeight;
+          if (gazeIndex > 0 && gazeIndex <= playbackGazePoints.length) {
+            let pointMatch = playbackGazePoints[gazeIndex - 1];
+            // Only draw bubble if coordinate corresponds to the current 400ms visual buffer window
+            if (elapsed - pointMatch.t < 400) {
+              let ratioX = canvas.width / window.innerWidth;
+              let ratioY = canvas.height / window.innerHeight;
 
               ctx.beginPath();
               ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(217, 83, 79, 0.65)"; 
+              ctx.fillStyle = "rgba(217, 83, 79, 0.65)"; // High-visibility translucent bubble
               ctx.fill();
             }
           }
-          requestAnimationFrame(syncGazeBubble);
+          requestAnimationFrame(renderReplayLoop);
         }
-
-        video.addEventListener('play', () => { requestAnimationFrame(syncGazeBubble); });
+        requestAnimationFrame(renderReplayLoop);
       },
       on_finish: function() {
-        URL.revokeObjectURL(localVideoUrl); 
-        localVideoUrl = null;
-        recordedChunks = [];
-        activeGazeLogs = []; 
+        isPlaybackActive = false;
+        playbackTimeline = [];
+        playbackGazePoints = [];
       }
     };
     timeline.push(rta_block_1);
@@ -340,8 +292,7 @@
 
     var block_2_brief = {
       type: jsPsychHtmlKeyboardResponse,
-      stimulus: "<p><strong>LAUNCHING BLOCK 2.</strong></p><p>System cleared. Press any key to engage video recorder and start the second task set.</p>",
-      on_finish: function() { launchBlockRecording(); } 
+      stimulus: "<p><strong>LAUNCHING BLOCK 2.</strong></p><p>System cleared. Press any key to start the second task set.</p>"
     };
     timeline.push(block_2_brief);
 
@@ -356,9 +307,6 @@
       choices: ['f', 'j'],
       extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#jspsych-image-keyboard-response-stimulus'] } }],
       data: { task: 'b2_response', correct_response: jsPsych.timelineVariable('correct_response') },
-      on_load: function() {
-        blockTrialStartTimes.push(performance.now());
-      },
       on_finish: function(data){ data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response); }
     };
 
@@ -374,8 +322,9 @@
       type: jsPsychHtmlKeyboardResponse,
       stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
       choices: "NO_KEYS",
-      on_load: function() {
-        finalizeBlockRecording('b2_response').then(() => { jsPsych.finishTrial(); });
+      trial_duration: 800,
+      on_finish: function() {
+        buildPlaybackTimeline('b2_response');
       }
     };
     timeline.push(compile_block_2_media);
@@ -386,9 +335,9 @@
         <div style="width:820px; text-align:center; font-family:Arial, sans-serif; margin:auto;">
           <h3 style="margin-top:0; margin-bottom:5px;">Retrospective Review: Task Block 2</h3>
           <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Evaluate your final performance out loud:</strong></p>
-          <div style="position:relative; width:800px; height:450px; background:black; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
-            <video id="block-2-video-replay" muted autoplay playsinline style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain;"></video>
-            <canvas id="block-2-canvas-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
+          <div style="position:relative; width:800px; height:450px; background:#f5f5f5; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
+            <div id="block-2-stimulus-display" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); display:flex; align-items:center; justify-content:center;"></div>
+            <canvas id="block-2-gaze-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
           </div>
         </div>
       `,
@@ -396,64 +345,61 @@
       show_done_button: true,
       data: { task: 'rta_audio_block_2' },
       on_load: function() {
-        let video = document.getElementById('block-2-video-replay');
-        if (!video) return;
+        playbackStartTime = performance.now();
+        isPlaybackActive = true;
 
-        video.src = localVideoUrl;
-        
-        video.addEventListener('canplay', function() {
-          video.play().catch(function(err) {
-            console.log("Autoplay handled natively by inline compliance layout attributes.");
-          });
-        });
+        function renderReplayLoop2() {
+          let display = document.getElementById('block-2-stimulus-display');
+          let canvas = document.getElementById('block-2-gaze-overlay');
+          if (!display || !canvas || !isPlaybackActive) return;
 
-        function syncGazeBubble2() {
-          let liveVideo = document.getElementById('block-2-video-replay');
-          let liveCanvas = document.getElementById('block-2-canvas-overlay');
-          
-          if (!liveVideo || !liveCanvas) return;
+          let elapsed = performance.now() - playbackStartTime;
 
-          if (liveVideo.paused || liveVideo.ended) {
-            requestAnimationFrame(syncGazeBubble2);
-            return;
+          if (elapsed > totalPlaybackDuration) {
+            playbackStartTime = performance.now();
+            elapsed = 0;
           }
-          
-          let ctx = liveCanvas.getContext('2d');
-          if (!ctx) return;
 
-          liveCanvas.width = 800;
-          liveCanvas.height = 450;
+          let currentState = playbackTimeline.find(state => elapsed >= state.startTime && elapsed < state.endTime);
+          if (currentState) {
+            if (currentState.type === 'fixation') {
+              display.innerHTML = '<div style="font-size:60px; font-family:Arial; color:#333;">+</div>';
+            } else {
+              display.innerHTML = `<img src="${currentState.src}" style="height:200px; width:auto; object-fit:contain;" />`;
+            }
+          } else {
+            display.innerHTML = '';
+          }
 
-          let currentClipTimeMs = liveVideo.currentTime * 1000;
+          let ctx = canvas.getContext('2d');
+          canvas.width = 800;
+          canvas.height = 450;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
           let gazeIndex2 = 0;
-          
-          while (gazeIndex2 < activeGazeLogs.length && activeGazeLogs[gazeIndex2].t < currentClipTimeMs) {
+          while (gazeIndex2 < playbackGazePoints.length && playbackGazePoints[gazeIndex2].t < elapsed) {
             gazeIndex2++;
           }
 
-          ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-          
-          if (gazeIndex2 > 0 && gazeIndex2 <= activeGazeLogs.length) {
-            let pointMatch = activeGazeLogs[gazeIndex2 - 1];
-            if (currentClipTimeMs - pointMatch.t < 400) {
-              let ratioX = liveCanvas.width / window.innerWidth;
-              let ratioY = liveCanvas.height / window.innerHeight;
+          if (gazeIndex2 > 0 && gazeIndex2 <= playbackGazePoints.length) {
+            let pointMatch = playbackGazePoints[gazeIndex2 - 1];
+            if (elapsed - pointMatch.t < 400) {
+              let ratioX = canvas.width / window.innerWidth;
+              let ratioY = canvas.height / window.innerHeight;
               ctx.beginPath();
               ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
               ctx.fillStyle = "rgba(217, 83, 79, 0.65)";
               ctx.fill();
             }
           }
-          requestAnimationFrame(syncGazeBubble2);
+          requestAnimationFrame(renderReplayLoop2);
         }
-        video.addEventListener('play', () => { requestAnimationFrame(syncGazeBubble2); });
+        requestAnimationFrame(renderReplayLoop2);
       },
       on_finish: function() {
-        URL.revokeObjectURL(localVideoUrl);
-        localVideoUrl = null;
-        recordedChunks = [];
-        activeGazeLogs = [];
-        if (screenStream) { screenStream.getTracks().forEach(track => track.stop()); }
+        isPlaybackActive = false;
+        playbackTimeline = [];
+        playbackGazePoints = [];
       }
     };
     timeline.push(rta_block_2);
