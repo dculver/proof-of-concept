@@ -59,9 +59,10 @@
         currentOffset += 1000;
 
         // 2. Reconstruct the Stimulus presentation period (matching user reaction latency)
+        let trialDuration = (trial.rt && trial.rt > 0) ? trial.rt : 2000; // Fallback to 2s if no input logged
         playbackTimeline.push({
           startTime: currentOffset,
-          endTime: currentOffset + trial.rt,
+          endTime: currentOffset + trialDuration,
           type: 'stimulus',
           src: trial.stimulus
         });
@@ -73,14 +74,15 @@
             playbackGazePoints.push({
               x: point.x,
               y: point.y,
-              t: currentOffset + point.t // Re-indexed time marker relative to replay zero-point
+              t: currentOffset + point.t // Re-indexed relative to replay zero-point
             });
           });
         }
-        currentOffset += trial.rt;
+        currentOffset += trialDuration;
       });
 
       totalPlaybackDuration = currentOffset;
+      if (totalPlaybackDuration <= 0) { totalPlaybackDuration = 5000; } // Loop fallback boundary safeguard
       playbackGazePoints.sort((a, b) => a.t - b.t);
     }
 
@@ -191,7 +193,6 @@
     };
     timeline.push(block_1_loop);
 
-    // Compiles logs instantly from memory cache rather than waiting for an asynchronous hardware handler
     var compile_block_1_media = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
@@ -203,76 +204,79 @@
     };
     timeline.push(compile_block_1_media);
 
-    /* HIGH-STABILITY RETROSPECTIVE TRIAL LAYER: Animates code structures natively over the Canvas frame */
+    /* FULL REENACTMENT REPLAY LAYER: Renders full-screen over viewport to ensure absolute pixel alignment */
     var rta_block_1 = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
-        <div style="width:820px; text-align:center; font-family:Arial, sans-serif; margin:auto;">
-          <h3 style="margin-top:0; margin-bottom:5px;">Retrospective Review: Task Block 1</h3>
-          <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Watch the red gaze indicator tracking your performance and narrate your strategy out loud:</strong></p>
-          
-          <div style="position:relative; width:800px; height:450px; background:#f5f5f5; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
-            <div id="block-1-stimulus-display" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); display:flex; align-items:center; justify-content:center;"></div>
-            <canvas id="block-1-gaze-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
+        <div style="font-family:Arial, sans-serif; text-align:center;">
+          <div style="position:fixed; top:15px; left:50%; transform:translateX(-50%); z-index:10000; background:rgba(255,255,255,0.95); padding:12px 24px; border:1px solid #ccc; border-radius:6px; width:720px; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+            <h4 style="margin:0 0 4px 0; color:#2c3e50;">Retrospective Review: Task Block 1</h4>
+            <p style="color:#d9534f; margin:0; font-size:13px;"><strong>🎙️ Audio Recording Active. Watch your gaze track and narrate your strategy out loud.</strong></p>
           </div>
+          
+          <div id="block-1-stimulus-display" style="position:fixed; top:0; left:0; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; background:#fff; z-index:8000;"></div>
+          
+          <canvas id="block-1-gaze-overlay" style="position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9000; pointer-events:none;"></canvas>
         </div>
       `,
       recording_duration: 30000,
       show_done_button: true,
       data: { task: 'rta_audio_block_1' },
       on_load: function() {
+        let canvas = document.getElementById('block-1-gaze-overlay');
+        if (canvas) {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+        }
+
         playbackStartTime = performance.now();
         isPlaybackActive = true;
 
         function renderReplayLoop() {
           let display = document.getElementById('block-1-stimulus-display');
-          let canvas = document.getElementById('block-1-gaze-overlay');
+          let liveCanvas = document.getElementById('block-1-gaze-overlay');
           
-          // Safety Bailout: Halts the animation thread immediately if user transitions past screen
-          if (!display || !canvas || !isPlaybackActive) return;
+          if (!display || !liveCanvas || !isPlaybackActive) return;
 
           let elapsed = performance.now() - playbackStartTime;
 
-          // If the timeline finishes, auto-loop back to zero to maintain presentation until narration ends
           if (elapsed > totalPlaybackDuration) {
             playbackStartTime = performance.now();
             elapsed = 0;
           }
 
-          // 1. Re-render display elements based on time offset receipts
+          // 1. Re-render visual stimulus states deterministically
           let currentState = playbackTimeline.find(state => elapsed >= state.startTime && elapsed < state.endTime);
           if (currentState) {
             if (currentState.type === 'fixation') {
-              display.innerHTML = '<div style="font-size:60px; font-family:Arial; color:#333;">+</div>';
+              let fixHtml = '<div style="font-size:60px; color:#333;">+</div>';
+              if (display.innerHTML !== fixHtml) { display.innerHTML = fixHtml; }
             } else {
-              display.innerHTML = `<img src="${currentState.src}" style="height:200px; width:auto; object-fit:contain;" />`;
+              let imgHtml = `<img src="${currentState.src}" style="height:200px; width:auto; object-fit:contain;" />`;
+              if (display.innerHTML !== imgHtml) { display.innerHTML = imgHtml; }
             }
           } else {
             display.innerHTML = '';
           }
 
-          // 2. Map eye-gaze coordinates over the display frame canvas context
-          let ctx = canvas.getContext('2d');
-          canvas.width = 800;
-          canvas.height = 450;
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          // 2. Draw gaze indicators directly using 1:1 raw viewport mapping
+          let ctx = liveCanvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
 
-          let gazeIndex = 0;
-          while (gazeIndex < playbackGazePoints.length && playbackGazePoints[gazeIndex].t < elapsed) {
-            gazeIndex++;
-          }
+            let gazeIndex = 0;
+            while (gazeIndex < playbackGazePoints.length && playbackGazePoints[gazeIndex].t < elapsed) {
+              gazeIndex++;
+            }
 
-          if (gazeIndex > 0 && gazeIndex <= playbackGazePoints.length) {
-            let pointMatch = playbackGazePoints[gazeIndex - 1];
-            // Only draw bubble if coordinate corresponds to the current 400ms visual buffer window
-            if (elapsed - pointMatch.t < 400) {
-              let ratioX = canvas.width / window.innerWidth;
-              let ratioY = canvas.height / window.innerHeight;
-
-              ctx.beginPath();
-              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(217, 83, 79, 0.65)"; // High-visibility translucent bubble
-              ctx.fill();
+            if (gazeIndex > 0 && gazeIndex <= playbackGazePoints.length) {
+              let pointMatch = playbackGazePoints[gazeIndex - 1];
+              if (elapsed - pointMatch.t < 400) {
+                ctx.beginPath();
+                ctx.arc(pointMatch.x, pointMatch.y, 22, 0, 2 * Math.PI);
+                ctx.fillStyle = "rgba(217, 83, 79, 0.65)";
+                ctx.fill();
+              }
             }
           }
           requestAnimationFrame(renderReplayLoop);
@@ -332,26 +336,32 @@
     var rta_block_2 = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
-        <div style="width:820px; text-align:center; font-family:Arial, sans-serif; margin:auto;">
-          <h3 style="margin-top:0; margin-bottom:5px;">Retrospective Review: Task Block 2</h3>
-          <p style="color:#d9534f; margin-top:0; margin-bottom:15px;"><strong>🎙️ Audio Recording Active. Evaluate your final performance out loud:</strong></p>
-          <div style="position:relative; width:800px; height:450px; background:#f5f5f5; margin:auto; border:2px solid #ccc; border-radius:6px; overflow:hidden;">
-            <div id="block-2-stimulus-display" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); display:flex; align-items:center; justify-content:center;"></div>
-            <canvas id="block-2-gaze-overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:999; pointer-events:none;"></canvas>
+        <div style="font-family:Arial, sans-serif; text-align:center;">
+          <div style="position:fixed; top:15px; left:50%; transform:translateX(-50%); z-index:10000; background:rgba(255,255,255,0.95); padding:12px 24px; border:1px solid #ccc; border-radius:6px; width:720px; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+            <h4 style="margin:0 0 4px 0; color:#2c3e50;">Retrospective Review: Task Block 2</h4>
+            <p style="color:#d9534f; margin:0; font-size:13px;"><strong>🎙️ Audio Recording Active. Evaluate your final performance out loud:</strong></p>
           </div>
+          <div id="block-2-stimulus-display" style="position:fixed; top:0; left:0; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; background:#fff; z-index:8000;"></div>
+          <canvas id="block-2-gaze-overlay" style="position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9000; pointer-events:none;"></canvas>
         </div>
       `,
       recording_duration: 30000,
       show_done_button: true,
       data: { task: 'rta_audio_block_2' },
       on_load: function() {
+        let canvas = document.getElementById('block-2-gaze-overlay');
+        if (canvas) {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+        }
+
         playbackStartTime = performance.now();
         isPlaybackActive = true;
 
         function renderReplayLoop2() {
           let display = document.getElementById('block-2-stimulus-display');
-          let canvas = document.getElementById('block-2-gaze-overlay');
-          if (!display || !canvas || !isPlaybackActive) return;
+          let liveCanvas = document.getElementById('block-2-gaze-overlay');
+          if (!display || !liveCanvas || !isPlaybackActive) return;
 
           let elapsed = performance.now() - playbackStartTime;
 
@@ -363,33 +373,33 @@
           let currentState = playbackTimeline.find(state => elapsed >= state.startTime && elapsed < state.endTime);
           if (currentState) {
             if (currentState.type === 'fixation') {
-              display.innerHTML = '<div style="font-size:60px; font-family:Arial; color:#333;">+</div>';
+              let fixHtml = '<div style="font-size:60px; color:#333;">+</div>';
+              if (display.innerHTML !== fixHtml) { display.innerHTML = fixHtml; }
             } else {
-              display.innerHTML = `<img src="${currentState.src}" style="height:200px; width:auto; object-fit:contain;" />`;
+              let imgHtml = `<img src="${currentState.src}" style="height:200px; width:auto; object-fit:contain;" />`;
+              if (display.innerHTML !== imgHtml) { display.innerHTML = imgHtml; }
             }
           } else {
             display.innerHTML = '';
           }
 
-          let ctx = canvas.getContext('2d');
-          canvas.width = 800;
-          canvas.height = 450;
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          let ctx = liveCanvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
 
-          let gazeIndex2 = 0;
-          while (gazeIndex2 < playbackGazePoints.length && playbackGazePoints[gazeIndex2].t < elapsed) {
-            gazeIndex2++;
-          }
+            let gazeIndex2 = 0;
+            while (gazeIndex2 < playbackGazePoints.length && playbackGazePoints[gazeIndex2].t < elapsed) {
+              gazeIndex2++;
+            }
 
-          if (gazeIndex2 > 0 && gazeIndex2 <= playbackGazePoints.length) {
-            let pointMatch = playbackGazePoints[gazeIndex2 - 1];
-            if (elapsed - pointMatch.t < 400) {
-              let ratioX = canvas.width / window.innerWidth;
-              let ratioY = canvas.height / window.innerHeight;
-              ctx.beginPath();
-              ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(217, 83, 79, 0.65)";
-              ctx.fill();
+            if (gazeIndex2 > 0 && gazeIndex2 <= playbackGazePoints.length) {
+              let pointMatch = playbackGazePoints[gazeIndex2 - 1];
+              if (elapsed - pointMatch.t < 400) {
+                ctx.beginPath();
+                ctx.arc(pointMatch.x, pointMatch.y, 22, 0, 2 * Math.PI);
+                ctx.fillStyle = "rgba(217, 83, 79, 0.65)";
+                ctx.fill();
+              }
             }
           }
           requestAnimationFrame(renderReplayLoop2);
