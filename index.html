@@ -68,6 +68,27 @@
     };
     timeline.push(init_mic);
 
+    /* NEW ADDITION: Standalone Eye-Tracker Calibration Instructions Screen 
+       This clears up the layout space so the calibration dots never get blocked by text banners.
+    */
+    var eye_tracker_instructions = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: `
+        <div style="width:650px; text-align:left; font-family:Arial, sans-serif; line-height:1.6; margin:auto; background:#f9f9f9; padding:30px; border:1px solid #ddd; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+          <h2 style="color:#2980b9; margin-top:0; text-align:center;">🎯 Eye-Tracker Calibration Setup</h2>
+          <p>Before beginning the main simulation, we need to calibrate the eye-tracking system to map your gaze accurately.</p>
+          <ol style="padding-left:20px; margin-bottom: 20px;">
+            <li><strong>Webcam Alignment:</strong> On the next screen, you will see a webcam view window. Center your face in the box until the tracking parameters lock, then click <strong>"Continue to Calibration"</strong>.</li>
+            <li><strong>Training the Grid:</strong> A series of black dots will appear one by one across a completely blank white screen.</li>
+            <li><strong>Look and Click:</strong> Look directly at each black dot and <strong>click it</strong>. The dot will move to a new position once it successfully records your eye coordinates. Follow it until the grid wraps up.</li>
+          </ol>
+          <p style="text-align:center; margin-top:25px; color:#7f8c8d; font-size: 14px;"><em>Tip: Ensure your room is well-lit and you remain sitting steady directly in front of the screen.</em></p>
+          <p style="text-align:center; font-weight:bold; margin-bottom:0; padding-top:15px; border-top:1px solid #eee; color:#2c3e50;">Press any key to start the hardware setup.</p>
+        </div>
+      `
+    };
+    timeline.push(eye_tracker_instructions);
+
     /* 3. WebGazer Camera Authorization (Matches plugin-webgazer-init-camera.js) */
     var init_camera = {
       type: jsPsychWebgazerInitCamera,
@@ -76,29 +97,14 @@
     };
     timeline.push(init_camera);
 
-    /* 4. WebGazer Calibration Grid Setup (Matches plugin-webgazer-init-calibrate.js) */
+    /* 4. WebGazer Calibration Grid Setup (Matches plugin-webgazer-init-calibrate.js) 
+       Banners removed! Completely clean fullscreen space for dot clicking.
+    */
     var calibration_grid = {
       type: jsPsychWebgazerCalibrate,
       calibration_mode: 'click',
       calibration_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
-      point_size: 20,
-      
-      on_start: function() {
-        // INJECT USER EXPERIENCE BANNER: High z-index prevents WebGazer canvas from covering it
-        var bannerHtml = `
-          <div id="calibration-ux-banner" style="position: fixed; top: 25px; left: 50%; transform: translateX(-50%); text-align: center; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.5; color: #2c3e50; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border: 2px solid #3498db; border-radius: 8px; z-index: 999999; box-shadow: 0 4px 15px rgba(0,0,0,0.15); width: 85%; max-width: 650px;">
-            <strong style="color: #2980b9; font-size: 18px;">🎯 Eye-Tracker Training Active</strong><br>
-            Please look directly at the black dot and <strong>click it 5 times</strong> until it turns green.<br>
-            Follow the dot as it moves around to sync your coordinates.
-          </div>
-        `;
-        document.body.insertAdjacentHTML('beforeend', bannerHtml);
-      },
-      on_finish: function() {
-        // TEARDOWN: Wipe the instruction element from the DOM so it doesn't linger into the trials
-        var banner = document.getElementById('calibration-ux-banner');
-        if (banner) { banner.remove(); }
-      }
+      point_size: 20
     };
     timeline.push(calibration_grid);
 
@@ -126,7 +132,6 @@
     };
     timeline.push(instructions);
 
-    /* Define trial stimuli array */
     var test_stimuli = [
       { stimulus: "img/blue.png",  correct_response: 'f'},
       { stimulus: "img/orange.png",  correct_response: 'j'}
