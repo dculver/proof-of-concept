@@ -11,6 +11,7 @@
 
     <script src="js/webgazer.js"></script>
     <script src="js/extension-webgazer.js"></script>
+    <script src="js/plugin-webgazer-init-camera.js"></script>
     <script src="js/plugin-webgazer-init-calibrate.js"></script>
 
     <script src="js/plugin-initialize-microphone.js"></script>
@@ -50,11 +51,20 @@
     };
     timeline.push(init_mic);
 
-    /* 3. WebGazer Webcam & Calibration Grid Setup with Dynamic Instruction Banner Included */
-    var init_camera_and_calibration = {
-      type: jsPsychWebgazerInitCalibration,
-      calibration_instructions: "<p>Center your face in the webcam view window. Click on each of the points that appear on the grid until they turn green to synchronize eye tracking.</p>",
-      validation_instructions: "<p>Now, look at the black dots to verify eye-tracking accuracy across the coordinates.</p>",
+    /* 3. WebGazer Camera Authorization (Matches plugin-webgazer-init-camera.js) */
+    var init_camera = {
+      type: jsPsychWebgazerInitCamera,
+      instructions: "<p>Center your face in the webcam window until the tracking indicators align.</p>",
+      button_text: "Continue to Calibration"
+    };
+    timeline.push(init_camera);
+
+    /* 4. WebGazer Calibration Grid Setup (Matches plugin-webgazer-init-calibrate.js) */
+    var calibration_grid = {
+      type: jsPsychWebgazerCalibrate,
+      calibration_mode: 'click',
+      calibration_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
+      point_size: 20,
       
       on_start: function() {
         // INJECT USER EXPERIENCE BANNER: High z-index prevents WebGazer canvas from covering it
@@ -73,16 +83,16 @@
         if (banner) { banner.remove(); }
       }
     };
-    timeline.push(init_camera_and_calibration);
+    timeline.push(calibration_grid);
 
-    /* 4. Welcome Message Trial */
+    /* 5. Welcome Message Trial */
     var welcome = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: "Welcome to the experiment. Press any key to begin."
     };
     timeline.push(welcome);
 
-    /* 5. Instructions Trial */
+    /* 6. Instructions Trial */
     var instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
@@ -105,7 +115,7 @@
       { stimulus: "img/orange.png",  correct_response: 'j'}
     ];
 
-    /* 6. Fixation Cross */
+    /* 7. Fixation Cross */
     var fixation = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: '<div style="font-size:60px;">+</div>',
@@ -118,7 +128,7 @@
       }
     };
 
-    /* 7. Active Image Assessment with Eye-Tracking Targets Enabled */
+    /* 8. Active Image Assessment with Eye-Tracking Targets Enabled */
     var test = {
       type: jsPsychImageKeyboardResponse,
       stimulus: jsPsych.timelineVariable('stimulus'),
@@ -147,7 +157,7 @@
     };
     timeline.push(test_procedure);
 
-    /* 8. Audio Response Reflection (Think-Aloud Component) */
+    /* 9. Audio Response Reflection (Think-Aloud Component) */
     var audio_reflection = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
@@ -163,7 +173,7 @@
     };
     timeline.push(audio_reflection);
 
-    /* 9. Performance Debrief Display */
+    /* 10. Performance Debrief Display */
     var debrief_block = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: function() {
@@ -179,7 +189,7 @@
     };
     timeline.push(debrief_block);
 
-    /* 10. Automated Data Centralization Transmission Pipe */
+    /* 11. Automated Data Centralization Transmission Pipe */
     function transmitDataPayload(completeDataJson) {
       const TargetSecureEndpoint = "https://your-secure-project-id.supabase.co/rest/v1/simulation_logs"; 
       
