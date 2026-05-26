@@ -25,8 +25,9 @@
     let mediaRecorder = null;
     let recordedChunks = [];
     let localVideoUrl = null;
-    let blockStartJsPsychTime = 0; // Universal clock anchor for synchronization
+    let recordingStartTime = 0;
     let activeGazeLogs = []; 
+    let blockTrialStartTimes = []; // Universal high-resolution timing array for sync mapping
 
     // Automated interception framework to map video style parameters safely
     if (window.webgazer && typeof webgazer.showVideo === 'function') {
@@ -41,10 +42,11 @@
       };
     }
 
-    // Helper: Turn on screen encoding and log block baseline clock metrics
+    // Helper: Turn on screen encoding and log block baseline clock metrics via native API
     function launchBlockRecording() {
       recordedChunks = [];
       activeGazeLogs = [];
+      blockTrialStartTimes = []; 
       
       let options = {};
       if (typeof MediaRecorder.isTypeSupported === 'function') {
@@ -62,8 +64,7 @@
         if (e.data && e.data.size > 0) { recordedChunks.push(e.data); }
       };
       
-      // Capture the exact timeline moment this block's media recorder begins
-      blockStartJsPsychTime = jsPsych.getTotalTime();
+      recordingStartTime = performance.now(); // Universal zero-anchor baseline
       mediaRecorder.start(1000); 
     }
 
@@ -74,29 +75,26 @@
           let videoBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
           localVideoUrl = URL.createObjectURL(videoBlob);
           
-          // POST-TRIAL EXTRACTION: Rebuild the tracking coordinates array from verified data
           activeGazeLogs = [];
           let blockTrials = jsPsych.data.get().filter({ task: blockTaskLabel }).values();
           
-          blockTrials.forEach(trial => {
-            if (trial.webgazer_data) {
+          // Rebuild coordinate arrays by mapping index locations across the timing array
+          for (let i = 0; i < blockTrials.length; i++) {
+            let trial = blockTrials[i];
+            if (trial.webgazer_data && blockTrialStartTimes[i]) {
+              let trialVideoOffset = blockTrialStartTimes[i] - recordingStartTime;
               let gazeData = typeof trial.webgazer_data === 'string' ? JSON.parse(trial.webgazer_data) : trial.webgazer_data;
-              
-              // Map when this specific trial screen appeared relative to our video start frame
-              let trialStartInExperiment = trial.time_elapsed - trial.rt;
-              let trialVideoOffset = trialStartInExperiment - blockStartJsPsychTime;
               
               gazeData.forEach(point => {
                 activeGazeLogs.push({
                   x: point.x,
                   y: point.y,
-                  t: trialVideoOffset + point.t // Accurate synchronization timeline marker
+                  t: trialVideoOffset + point.t 
                 });
               });
             }
-          });
+          }
           
-          // Sort coordinates sequentially to optimize pointer lookup performance
           activeGazeLogs.sort((a, b) => a.t - b.t);
           resolve();
         };
@@ -163,7 +161,7 @@
     var eye_tracker_instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
-        <div style="width:650px; text-align:left; font-family:Arial, sans-serif; line-height:1.6; margin:auto; background:#f9f9f9; padding:30px; border:1px solid #ddd; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.05);\">
+        <div style="width:650px; text-align:left; font-family:Arial, sans-serif; line-height:1.6; margin:auto; background:#f9f9f9; padding:30px; border:1px solid #ddd; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
           <h2 style="color:#2980b9; margin-top:0; text-align:center;">🎯 Eye-Tracker Calibration Setup</h2>
           <p>Before beginning the main simulation, we need to calibrate the eye-tracking system to map your gaze accurately.</p>
           <ol style="padding-left:20px; margin-bottom: 20px;">
@@ -229,6 +227,10 @@
       choices: ['f', 'j'],
       extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#jspsych-image-keyboard-response-stimulus'] } }],
       data: { task: 'b1_response', correct_response: jsPsych.timelineVariable('correct_response') },
+      on_load: function() {
+        // Log the exact rendering frame millisecond to maintain synchronization bounds
+        blockTrialStartTimes.push(performance.now());
+      },
       on_finish: function(data){ data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response); }
     };
 
@@ -245,7 +247,6 @@
       stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
       choices: "NO_KEYS",
       on_load: function() {
-        // Stop the recorder and assemble the eye tracking data using the block target string
         finalizeBlockRecording('b1_response').then(() => { jsPsych.finishTrial(); });
       }
     };
@@ -277,12 +278,9 @@
 
         video.src = localVideoUrl;
         
-        // Defensive exception handling blocks async browser media rejections
         video.play().catch(function(err) {
-          console.log("Safe Fallback: Browser delayed direct execution. Inline attributes handling playback stream.");
+          console.log("Safe Fallback: Inline execution handling autoplay sequence blocks.");
         });
-
-        let gazeIndex = 0;
 
         function syncGazeBubble() {
           if (!video || video.paused || video.ended) {
@@ -291,6 +289,7 @@
           }
           
           let currentClipTimeMs = video.currentTime * 1000;
+          let gazeIndex = 0; // Resetting each frame ensures full scrubbing/seeking alignment support
 
           while (gazeIndex < activeGazeLogs.length && activeGazeLogs[gazeIndex].t < currentClipTimeMs) {
             gazeIndex++;
@@ -346,6 +345,9 @@
       choices: ['f', 'j'],
       extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#jspsych-image-keyboard-response-stimulus'] } }],
       data: { task: 'b2_response', correct_response: jsPsych.timelineVariable('correct_response') },
+      on_load: function() {
+        blockTrialStartTimes.push(performance.now());
+      },
       on_finish: function(data){ data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response); }
     };
 
@@ -392,10 +394,8 @@
         video.src = localVideoUrl;
         
         video.play().catch(function(err) {
-          console.log("Safe Fallback: Browser delayed direct execution. Inline attributes handling playback stream.");
+          console.log("Safe Fallback: Inline execution handling autoplay sequence blocks.");
         });
-
-        let gazeIndex2 = 0;
 
         function syncGazeBubble2() {
           if (!video || video.paused || video.ended) {
@@ -404,6 +404,7 @@
           }
           
           let currentClipTimeMs = video.currentTime * 1000;
+          let gazeIndex2 = 0;
           
           while (gazeIndex2 < activeGazeLogs.length && activeGazeLogs[gazeIndex2].t < currentClipTimeMs) {
             gazeIndex2++;
