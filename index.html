@@ -269,42 +269,51 @@
       data: { task: 'rta_audio_block_1' },
       on_load: function() {
         let video = document.getElementById('block-1-video-replay');
-        let canvas = document.getElementById('block-1-canvas-overlay');
-        let ctx = canvas.getContext('2d');
-
-        canvas.width = 800; 
-        canvas.height = 450;
+        if (!video) return;
 
         video.src = localVideoUrl;
         
-        video.play().catch(function(err) {
-          console.log("Safe Fallback: Inline execution handling autoplay sequence blocks.");
+        // Native event listener guarantees metadata initialization before triggering execution
+        video.addEventListener('canplay', function() {
+          video.play().catch(function(err) {
+            console.log("Autoplay handled natively by inline compliance layout attributes.");
+          });
         });
 
         function syncGazeBubble() {
-          // IRB COMPLIANCE SAFETY CHECK: Destroys the loop context instantly if the page transitions
-          if (!document.getElementById('block-1-video-replay')) return;
+          // BULLETPROOF DYNAMIC POLLING: Continuously re-fetches references live inside the active frame
+          let liveVideo = document.getElementById('block-1-video-replay');
+          let liveCanvas = document.getElementById('block-1-canvas-overlay');
+          
+          // If the elements are missing, break the animation loop context instantly
+          if (!liveVideo || !liveCanvas) return;
 
-          if (video.paused || video.ended) {
+          if (liveVideo.paused || liveVideo.ended) {
             requestAnimationFrame(syncGazeBubble);
             return;
           }
           
-          let currentClipTimeMs = video.currentTime * 1000;
+          let ctx = liveCanvas.getContext('2d');
+          if (!ctx) return;
+
+          liveCanvas.width = 800; 
+          liveCanvas.height = 450;
+
+          let currentClipTimeMs = liveVideo.currentTime * 1000;
           let gazeIndex = 0; 
 
           while (gazeIndex < activeGazeLogs.length && activeGazeLogs[gazeIndex].t < currentClipTimeMs) {
             gazeIndex++;
           }
 
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
           
           if (gazeIndex > 0 && gazeIndex <= activeGazeLogs.length) {
             let pointMatch = activeGazeLogs[gazeIndex - 1];
             
             if (currentClipTimeMs - pointMatch.t < 400) {
-              let ratioX = canvas.width / window.innerWidth;
-              let ratioY = canvas.height / window.innerHeight;
+              let ratioX = liveCanvas.width / window.innerWidth;
+              let ratioY = liveCanvas.height / window.innerHeight;
 
               ctx.beginPath();
               ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
@@ -388,39 +397,47 @@
       data: { task: 'rta_audio_block_2' },
       on_load: function() {
         let video = document.getElementById('block-2-video-replay');
-        let canvas = document.getElementById('block-2-canvas-overlay');
-        let ctx = canvas.getContext('2d');
-        canvas.width = 800;
-        canvas.height = 450;
-        
+        if (!video) return;
+
         video.src = localVideoUrl;
         
-        video.play().catch(function(err) {
-          console.log("Safe Fallback: Inline execution handling autoplay sequence blocks.");
+        video.addEventListener('canplay', function() {
+          video.play().catch(function(err) {
+            console.log("Autoplay handled natively by inline compliance layout attributes.");
+          });
         });
 
         function syncGazeBubble2() {
-          if (!document.getElementById('block-2-video-replay')) return;
+          let liveVideo = document.getElementById('block-2-video-replay');
+          let liveCanvas = document.getElementById('block-2-canvas-overlay');
+          
+          if (!liveVideo || !liveCanvas) return;
 
-          if (video.paused || video.ended) {
+          if (liveVideo.paused || liveVideo.ended) {
             requestAnimationFrame(syncGazeBubble2);
             return;
           }
           
-          let currentClipTimeMs = video.currentTime * 1000;
+          let ctx = liveCanvas.getContext('2d');
+          if (!ctx) return;
+
+          liveCanvas.width = 800;
+          liveCanvas.height = 450;
+
+          let currentClipTimeMs = liveVideo.currentTime * 1000;
           let gazeIndex2 = 0;
           
           while (gazeIndex2 < activeGazeLogs.length && activeGazeLogs[gazeIndex2].t < currentClipTimeMs) {
             gazeIndex2++;
           }
 
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
           
           if (gazeIndex2 > 0 && gazeIndex2 <= activeGazeLogs.length) {
             let pointMatch = activeGazeLogs[gazeIndex2 - 1];
             if (currentClipTimeMs - pointMatch.t < 400) {
-              let ratioX = canvas.width / window.innerWidth;
-              let ratioY = canvas.height / window.innerHeight;
+              let ratioX = liveCanvas.width / window.innerWidth;
+              let ratioY = liveCanvas.height / window.innerHeight;
               ctx.beginPath();
               ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 22, 0, 2 * Math.PI);
               ctx.fillStyle = "rgba(217, 83, 79, 0.65)";
