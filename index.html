@@ -26,7 +26,8 @@
     let recordedChunks = [];
     let localVideoUrl = null;
     let recordingStartTime = 0;
-    let activeGazeLogs = []; // Stores lightweight text-only coordinates for live overlay synchronization
+    let activeGazeLogs = []; 
+    let isRecordingActive = false;
 
     // Automated interception framework to map video style parameters safely
     if (window.webgazer && typeof webgazer.showVideo === 'function') {
@@ -41,37 +42,56 @@
       };
     }
 
-    // Helper: Turn on screen encoding and reset trackers
+    // Helper: Turn on screen encoding and engage non-destructive tracking loop
     function launchBlockRecording() {
       recordedChunks = [];
       activeGazeLogs = [];
       
-      mediaRecorder = new MediaRecorder(screenStream, { mimeType: 'video/webm;codecs=vp8' });
+      // Adaptive MIME-Type checking prevents DOMExceptions across Windows and Mac environments
+      let options = {};
+      if (typeof MediaRecorder.isTypeSupported === 'function') {
+        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+          options = { mimeType: 'video/webm;codecs=vp8' };
+        } else if (MediaRecorder.isTypeSupported('video/webm')) {
+          options = { mimeType: 'video/webm' };
+        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+          options = { mimeType: 'video/mp4' };
+        }
+      }
+      
+      mediaRecorder = new MediaRecorder(screenStream, options);
       mediaRecorder.ondataavailable = function(e) {
         if (e.data && e.data.size > 0) { recordedChunks.push(e.data); }
       };
       
       recordingStartTime = performance.now();
       mediaRecorder.start();
+      isRecordingActive = true;
 
-      // Tap directly into WebGazer's real-time coordinate coordinates
-      webgazer.setGazeListener(function(data, elapsedTime) {
-        if (data) {
-          activeGazeLogs.push({
-            x: data.x,
-            y: data.y,
-            t: performance.now() - recordingStartTime // Maps coordinate relative to video zero-point
-          });
+      // Safe Polling Loop: Logs coordinates without clearing jsPsych's global tracking listeners
+      function trackCurrentGazeFrame() {
+        if (!isRecordingActive) return;
+        if (window.webgazer) {
+          let prediction = webgazer.getCurrentPrediction();
+          if (prediction) {
+            activeGazeLogs.push({
+              x: prediction.x,
+              y: prediction.y,
+              t: performance.now() - recordingStartTime
+            });
+          }
         }
-      });
+        requestAnimationFrame(trackCurrentGazeFrame);
+      }
+      requestAnimationFrame(trackCurrentGazeFrame);
     }
 
     // Helper: Halt screen recording and lock the RAM Blob reference link
     function finalizeBlockRecording() {
       return new Promise((resolve) => {
+        isRecordingActive = false;
         mediaRecorder.onstop = function() {
-          if (window.webgazer) { webgazer.setGazeListener(null); } // Turn off callback cross-talk
-          let videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
+          let videoBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
           localVideoUrl = URL.createObjectURL(videoBlob);
           resolve();
         };
@@ -121,7 +141,7 @@
       on_load: function() {
         document.getElementById('authorize-capture-btn').addEventListener('click', function() {
           navigator.mediaDevices.getDisplayMedia({
-            video: { width: 1280, height: 720, frameRate: 15 }, // Optimized resolution/frame rate drops CPU strain by 50%
+            video: { width: 1280, height: 720, frameRate: 15 }, 
             audio: false
           }).then(stream => {
             screenStream = stream;
@@ -182,7 +202,7 @@
     var block_1_brief = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: "<p><strong>LAUNCHING BLOCK 1.</strong></p><p>Press F for Blue, J for Orange. Speed and accuracy metrics apply.</p><p>Press any key to engage video recorder and start block trials.</p>",
-      on_finish: function() { launchBlockRecording(); } // Capture initiates exactly as text generates
+      on_finish: function() { launchBlockRecording(); } 
     };
     timeline.push(block_1_brief);
 
@@ -215,7 +235,6 @@
     };
     timeline.push(block_1_loop);
 
-    // Asynchronous separation interval to securely lock the RAM clip before RTA injection load
     var compile_block_1_media = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing segment replay files locally... Please wait.</h3></div>',
@@ -226,7 +245,6 @@
     };
     timeline.push(compile_block_1_media);
 
-    /* INTEGRATED REPLAY LAYER: Canvas is mapped directly over the standard Audio Response plugin */
     var rta_block_1 = {
       type: jsPsychHtmlAudioResponse,
       stimulus: `
@@ -248,7 +266,7 @@
         let canvas = document.getElementById('block-1-canvas-overlay');
         let ctx = canvas.getContext('2d');
 
-        canvas.width = 800; // Matches explicit context grid layout boundaries
+        canvas.width = 800; 
         canvas.height = 450;
 
         video.src = localVideoUrl;
@@ -258,18 +276,16 @@
           if (video.paused || video.ended) { return; }
           
           let currentClipTimeMs = video.currentTime * 1000;
-          // Locate closest temporal log array entry matching the active play frame
           let pointMatch = activeGazeLogs.find(pt => pt.t >= currentClipTimeMs);
 
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           if (pointMatch) {
-            // Downscale actual coordinate positions relative to the video frame layout boundaries
             let ratioX = canvas.width / window.innerWidth;
             let ratioY = canvas.height / window.innerHeight;
 
             ctx.beginPath();
             ctx.arc(pointMatch.x * ratioX, pointMatch.y * ratioY, 20, 0, 2 * Math.PI);
-            ctx.fillStyle = "rgba(217, 83, 79, 0.5)"; // Translucent tracking bubble
+            ctx.fillStyle = "rgba(217, 83, 79, 0.5)"; 
             ctx.fill();
           }
           requestAnimationFrame(syncGazeBubble);
@@ -278,11 +294,10 @@
         video.addEventListener('play', () => { requestAnimationFrame(syncGazeBubble); });
       },
       on_finish: function() {
-        /* --- HIGH-PRIORITY PURGE FOR IRB PRIVACY APPROVAL --- */
-        URL.revokeObjectURL(localVideoUrl); // Breaks the address allocation pointer entirely
+        URL.revokeObjectURL(localVideoUrl); 
         localVideoUrl = null;
         recordedChunks = [];
-        activeGazeLogs = []; // Frees system allocation back to 0 bytes
+        activeGazeLogs = []; 
       }
     };
     timeline.push(rta_block_1);
@@ -293,7 +308,7 @@
     var block_2_brief = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: "<p><strong>LAUNCHING BLOCK 2.</strong></p><p>System cleared. Press any key to engage video recorder and start the second task set.</p>",
-      on_finish: function() { launchBlockRecording(); } // RAM loop loops again completely clean
+      on_finish: function() { launchBlockRecording(); } 
     };
     timeline.push(block_2_brief);
 
@@ -371,12 +386,10 @@
         video.addEventListener('play', () => { requestAnimationFrame(syncGazeBubble2); });
       },
       on_finish: function() {
-        /* --- SECURE CLEAN-UP SECOND PURGE INTERACTION --- */
         URL.revokeObjectURL(localVideoUrl);
         localVideoUrl = null;
         recordedChunks = [];
         activeGazeLogs = [];
-        // Terminate active screen tracking stream entirely to clear system layout controls
         if (screenStream) { screenStream.getTracks().forEach(track => track.stop()); }
       }
     };
