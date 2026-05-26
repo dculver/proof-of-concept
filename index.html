@@ -50,11 +50,28 @@
     };
     timeline.push(init_mic);
 
-    /* 3. WebGazer Webcam & Calibration Grid Setup (Matches your plugin-webgazer-init-calibration.js file) */
+    /* 3. WebGazer Webcam & Calibration Grid Setup with Dynamic Instruction Banner Included */
     var init_camera_and_calibration = {
       type: jsPsychWebgazerInitCalibration,
       calibration_instructions: "<p>Center your face in the webcam view window. Click on each of the points that appear on the grid until they turn green to synchronize eye tracking.</p>",
-      validation_instructions: "<p>Now, look at the black dots to verify eye-tracking accuracy across the coordinates.</p>"
+      validation_instructions: "<p>Now, look at the black dots to verify eye-tracking accuracy across the coordinates.</p>",
+      
+      on_start: function() {
+        // INJECT USER EXPERIENCE BANNER: High z-index prevents WebGazer canvas from covering it
+        var bannerHtml = `
+          <div id="calibration-ux-banner" style="position: fixed; top: 25px; left: 50%; transform: translateX(-50%); text-align: center; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.5; color: #2c3e50; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border: 2px solid #3498db; border-radius: 8px; z-index: 999999; box-shadow: 0 4px 15px rgba(0,0,0,0.15); width: 85%; max-width: 650px;">
+            <strong style="color: #2980b9; font-size: 18px;">🎯 Eye-Tracker Training Active</strong><br>
+            Please look directly at the black dot and <strong>click it 5 times</strong> until it turns green.<br>
+            Follow the dot as it moves around to sync your coordinates.
+          </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', bannerHtml);
+      },
+      on_finish: function() {
+        // TEARDOWN: Wipe the instruction element from the DOM so it doesn't linger into the trials
+        var banner = document.getElementById('calibration-ux-banner');
+        if (banner) { banner.remove(); }
+      }
     };
     timeline.push(init_camera_and_calibration);
 
