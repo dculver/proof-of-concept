@@ -2,7 +2,7 @@ library(shiny)
 library(jsonlite)
 library(dplyr)
 library(ggplot2)
-library(S7)
+library(S7) # The crucial fix for the ggplot2 WebAssembly bug
 
 ui <- fluidPage(
   tags$head(tags$script(HTML("
@@ -33,56 +33,83 @@ ui <- fluidPage(
   
   titlePanel("OT Clinical Reasoning Feedback"),
   
-  # A loading message that will disappear once R finishes thinking
+  # Loading indicator
   conditionalPanel(
     condition = "input.jspsych_data == null",
-    h4(style = "color: #2980b9;", "Analyzing simulation data...")
+    h4(style = "color: #2980b9;", "Analyzing simulation data & rendering visuals...")
   ),
   
-  uiOutput("feedback_ui")
+  # Layout: Text on top, Plot on bottom
+  uiOutput("feedback_ui"),
+  br(),
+  plotOutput("gaze_heatmap", width = "100%", height = "500px")
 )
 
 server <- function(input, output, session) {
   
+  # 1. The Text Feedback (Clinical Reasoning)
   output$feedback_ui <- renderUI({
-    # Wait until JS sends the data
     req(input$jspsych_data)
+    if(input$jspsych_data == "NO_DATA") return(h3("No session data found in your browser."))
     
-    if(input$jspsych_data == "NO_DATA") {
-      return(h3("No session data found in your browser. Please run the simulation first."))
-    }
-    
-    # tryCatch prevents the White Screen of Death and prints the error
     tryCatch({
-      
-      # 1. Parse the JSON and flatten it into a dataframe
       data <- fromJSON(input$jspsych_data, flatten = TRUE)
-      
-      # 2. Extract the specific row that actually contains the case events
-      # We filter out all the NULL rows (like mic, camera, calibration)
       events_list <- data$case_events
       events <- events_list[!sapply(events_list, is.null)][[1]]
       
-      # 3. Logic: Did they click the video tab?
       viewed_video <- "video" %in% events$state
       
-      # 4. Build the UI response
       tagList(
         h3("Clinical Reasoning Summary"),
         if(viewed_video) {
-          p(style = "color: green;", "Excellent work! You observed the patient's ADL performance before submitting your evaluation.") 
+          p(style = "color: green; font-size: 16px;", "Excellent work! You observed the patient's ADL performance before submitting your evaluation.") 
         } else {
-          p(style = "color: red;", "Feedback: You made an intervention recommendation without observing the ADL video. Direct observation is critical for determining appropriate adaptive equipment.")
+          p(style = "color: red; font-size: 16px;", "Feedback: You made an intervention recommendation without observing the ADL video. Direct observation is critical for determining appropriate adaptive equipment.")
         }
       )
+    }, error = function(e) { p("Text analysis error: ", e$message) })
+  })
+  
+  # 2. The Visual Feedback (Eye-Tracking Heatmap)
+  output$gaze_heatmap <- renderPlot({
+    req(input$jspsych_data)
+    if(input$jspsych_data == "NO_DATA") return(NULL)
+    
+    tryCatch({
+      data <- fromJSON(input$jspsych_data, flatten = TRUE)
       
-    }, error = function(e) {
-      # If R crashes, print the error to the screen
-      tagList(
-        h3(style = "color: red;", "Analysis Error"),
-        p("R encountered an error while processing the JSON data:"),
-        code(e$message)
-      )
+      # Extract the WebGazer array (filtering out empty trials like the mic test)
+      gaze_list <- data$webgazer_data
+      gaze_raw <- gaze_list[!sapply(gaze_list, is.null)][[1]]
+      
+      # Fallback if calibration failed or no gaze data exists
+      if(length(gaze_raw) == 0 || is.null(gaze_raw$x)) {
+        plot(1, type="n", axes=FALSE, xlab="", ylab="", main="No valid eye-tracking data found for this session.")
+        return()
+      }
+      
+      # Convert the JSON list to a clean R Dataframe
+      df <- as.data.frame(gaze_raw)
+      
+      # Draw the Heatmap
+      # Note: We use -y because web browsers draw coordinates top-to-bottom, but R draws bottom-to-top!
+      ggplot(df, aes(x = x, y = -y)) +  
+        stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", alpha = 0.6) +
+        scale_fill_gradientn(colors = c("blue", "green", "yellow", "red")) +
+        theme_minimal() +
+        theme(
+            axis.text = element_blank(),
+            axis.ticks = element_blank(),
+            panel.grid = element_blank()
+        ) +
+        labs(
+            title = "Visual Attention Density",
+            subtitle = "Where you focused during the case review",
+            x = "", y = "", fill = "Gaze Intensity"
+        )
+        
+    }, error = function(e) { 
+      plot(1, type="n", axes=FALSE, xlab="", ylab="", main=paste("Error rendering plot:", e$message)) 
     })
   })
 }
