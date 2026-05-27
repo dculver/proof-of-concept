@@ -282,16 +282,49 @@
         type: jsPsychCallFunction,
         func: function() {
             return new Promise((resolve) => {
-                let currentData = jsPsych.data.get().json();
-                let request = indexedDB.open("OT_Simulation_DB", 1);
-                request.onsuccess = (e) => {
-                    let db = e.target.result;
-                    let tx = db.transaction("sessions", "readwrite");
-                    tx.objectStore("sessions").put({ id: "active_session", data: currentData });
-                    tx.oncomplete = () => resolve();
-                };
+                try {
+                    let currentData = jsPsych.data.get().json();
+                    let request = indexedDB.open("OT_Simulation_DB", 1);
+                    
+                    // FIX 1: Automatically create the database if the user doesn't have it
+                    request.onupgradeneeded = (e) => {
+                        let db = e.target.result;
+                        if (!db.objectStoreNames.contains("sessions")) {
+                            db.createObjectStore("sessions", { keyPath: "id" });
+                        }
+                    };
+
+                    request.onsuccess = (e) => {
+                        try {
+                            let db = e.target.result;
+                            let tx = db.transaction("sessions", "readwrite");
+                            tx.objectStore("sessions").put({ id: "active_session", data: currentData });
+                            
+                            // Tell jsPsych to proceed to the Dashboard/Case 2 once saved
+                            tx.oncomplete = () => resolve();
+                            
+                            // FIX 2: If the save fails, still proceed (don't trap the user)
+                            tx.onerror = () => {
+                                console.error("IDB Save Failed");
+                                resolve();
+                            };
+                        } catch (err) {
+                            console.error("IDB transaction error:", err);
+                            resolve(); // Proceed anyway
+                        }
+                    };
+
+                    request.onerror = (e) => {
+                        console.error("IDB open error:", e);
+                        resolve(); // Proceed anyway
+                    };
+                } catch (fatalErr) {
+                    console.error("Fatal IDB error:", fatalErr);
+                    resolve(); // Proceed anyway
+                }
             });
-        }, async: true
+        }, 
+        async: true
     });
 
     var dashboard_iframe_trial = {
