@@ -8,8 +8,7 @@
     <script src="js/plugin-html-keyboard-response.js"></script>
     <script src="js/plugin-image-keyboard-response.js"></script>
     <script src="js/plugin-preload.js"></script>
-
-    <script src="js/webgazer.js"></script>
+    <script src="js/plugin-call-function.js"></script> <script src="js/webgazer.js"></script>
     <script src="js/extension-webgazer.js"></script>
     <script src="js/plugin-webgazer-init-camera.js"></script>
     <script src="js/plugin-webgazer-init-calibrate.js"></script>
@@ -21,68 +20,77 @@
   <body style="margin:0; padding:0; background:#ecf0f1;"></body>
   <script>
 
-    /* --- GLOBAL DATA STORAGE FOR REENACTMENT --- */
-    let rawCaseData = null; 
+    /* ================= GLOBAL VARIABLES ================= */
+    let rawCase1Data = null;
+    let rawCase2Data = null; 
     let playbackTimeline = [];
     let playbackGazePoints = [];
     let totalPlaybackDuration = 0;
     let playbackStartTime = 0;
     let isPlaybackActive = false;
 
-    // Automated interception framework to map video style parameters safely
+    // WebGazer video interceptor
     if (window.webgazer && typeof webgazer.showVideo === 'function') {
       var originalShowVideo = webgazer.showVideo;
       webgazer.showVideo = function(val) {
         if (document.getElementById('webgazerVideoFeed')) {
           return originalShowVideo.apply(this, arguments);
-        } else {
-          return this;
-        }
+        } else { return this; }
       };
     }
 
-    /* --- MOCK OT CASE STUDY CONTENT --- */
-    const tabContents = {
-      welcome: `
-        <h2 style="color:#2c3e50;">Case Brief</h2>
-        <p style="font-size:18px; line-height:1.6;">Please review the patient's medical chart and the ADL observation video using the navigation menu on the left. Once you have formulated your clinical reasoning, navigate to the Intervention Plan to make your recommendation.</p>
-      `,
-      history: `
-        <h2 style="color:#2c3e50;">Medical Chart</h2>
-        <div style="background:#fff; padding:20px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.1); font-size:16px; line-height:1.6;">
-            <p><strong>Patient Name:</strong> Evelyn S.</p>
-            <p><strong>Age:</strong> 68</p>
-            <p><strong>Diagnosis:</strong> Ischemic stroke (Left MCA) occurring 4 weeks prior.</p>
-            <p><strong>Current Status:</strong> Patient presents with right hemiparesis. Gross motor strength in right upper extremity is 3/5. Fine motor coordination is significantly impaired. Patient expresses high frustration during bi-manual daily tasks.</p>
-            <p><strong>Therapy Goal:</strong> Return to independent meal preparation in her home kitchen.</p>
-        </div>
-      `,
-      video: `
-        <h2 style="color:#2c3e50;">ADL Observation: Meal Preparation</h2>
-        <div style="width:100%; max-width:800px; height:400px; background:#111; color:#aaa; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:6px; box-shadow:inset 0 0 20px rgba(0,0,0,0.5); margin-top:20px;">
-            <span style="font-size:48px; margin-bottom:15px;">▶️</span>
-            <p style="font-style:italic;">[ VIDEO PLACEHOLDER ]</p>
-            <p style="color:#fff; text-align:center; padding:0 40px;">Patient is attempting to spread peanut butter on a slice of bread. She is struggling to stabilize the jar and the bread using her affected right hand, causing the bread to tear.</p>
-        </div>
-      `,
-      eval: `
-        <h2 style="color:#2c3e50;">Intervention Plan</h2>
-        <div style="background:#fff; padding:20px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.1); font-size:16px;">
-            <p>Based on the medical chart and ADL observation, select the primary adaptive equipment recommendation to improve independence in this specific task:</p>
-            <div style="margin-top:20px;">
-                <label style="display:block; margin-bottom:15px; cursor:pointer;"><input type="radio" name="ae" value="rocker"> Rocker Knife (One-handed cutting)</label>
-                <label style="display:block; margin-bottom:15px; cursor:pointer;"><input type="radio" name="ae" value="dycem"> Dycem / Non-slip mat (Stabilization)</label>
-                <label style="display:block; margin-bottom:15px; cursor:pointer;"><input type="radio" name="ae" value="cuff"> Universal Cuff (Grip assistance)</label>
-            </div>
-        </div>
-      `
-    };
+    /* ================= INITIALIZATION & OSF SAVE ================= */
+    var jsPsych = initJsPsych({
+      extensions: [{ type: jsPsychExtensionWebgazer }],
+      on_finish: function() {
+        // Final Loading Screen
+        document.body.innerHTML = `
+          <div style="text-align:center; margin-top:20%; font-family:Arial; color:#2c3e50;">
+            <h3>Saving high-fidelity session data...</h3>
+            <p>Please wait...</p>
+          </div>
+        `;
 
-    // Helper: Converts the state-based Mega-Trial data into a timeline for the replay engine
-    // NEW: Includes a rolling average (smoothing) to fix jittery playback dots
+        let finalDataJson = jsPsych.data.get().json();
+        let uniqueId = "P_" + Math.random().toString(36).substr(2, 9).toUpperCase();
+
+        // Send full session to OSF
+        fetch("https://pipe.jspsych.org/api/data/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            experimentID: "7to0EiezFvtE", 
+            filename: uniqueId + "_OT_Full_Session.json",
+            data: finalDataJson
+          })
+        })
+        .then(() => {
+            document.body.innerHTML = `<div style="text-align:center; margin-top:20%; font-family:Arial; color:green;"><h3>Sync complete! Thank you for participating. You may close this tab.</h3></div>`;
+        })
+        .catch((error) => {
+            console.error(error);
+            document.body.innerHTML = `<div style="text-align:center; margin-top:20%; font-family:Arial; color:red;"><h3>Data saved locally, but OSF cloud sync failed. Please notify researcher.</h3></div>`;
+        });
+      }
+    });
+
+    var timeline = [];
+
+    /* ================= RANDOMIZATION ================= */
+    // Assign to experimental (dashboard) or control group
+    var assigned_condition = jsPsych.randomization.sampleWithoutReplacement(['dashboard', 'control'], 1)[0];
+    
+    // Stamp the condition onto every row of data
+    jsPsych.data.addProperties({
+        experimental_condition: assigned_condition
+    });
+
+
+    /* ================= REPLAY HELPER (With Smoothing) ================= */
     function buildPlaybackTimeline(trialData) {
       playbackTimeline = [];
       playbackGazePoints = [];
+      if (!trialData) return;
       totalPlaybackDuration = trialData.rt;
 
       let events = trialData.case_events;
@@ -94,14 +102,13 @@
           }
       }
 
-      // Extract raw points
       let rawPoints = [];
       if(trialData.webgazer_data && Array.isArray(trialData.webgazer_data)) {
           trialData.webgazer_data.forEach(p => rawPoints.push({ x: p.x, y: p.y, t: p.t }));
       }
       rawPoints.sort((a, b) => a.t - b.t);
 
-      // MATHEMATICAL SMOOTHING: Rolling average over a 5 frame window to kill jitter
+      // 5-frame rolling average for jitter reduction
       let windowSize = 5;
       for (let i = 0; i < rawPoints.length; i++) {
           let startIdx = Math.max(0, i - windowSize);
@@ -112,74 +119,19 @@
       }
     }
 
-    /* ================= INITIALIZATION & DUAL-ROUTE DATA PIPELINE ================= */
-    var jsPsych = initJsPsych({
-      extensions: [{ type: jsPsychExtensionWebgazer }],
-      on_finish: function() {
-        
-        document.body.innerHTML = `
-          <div style="text-align:center; margin-top:20%; font-family:Arial; color:#2c3e50;">
-            <h3>Saving high-fidelity session data...</h3>
-            <p>Please do not close this tab. You will be redirected to your feedback dashboard momentarily.</p>
-          </div>
-        `;
 
-        let finalDataJson = jsPsych.data.get().json();
-        let uniqueId = "P_" + Math.random().toString(36).substr(2, 9).toUpperCase();
-
-        let request = indexedDB.open("OT_Simulation_DB", 1);
-        
-        request.onupgradeneeded = (e) => {
-          let db = e.target.result;
-          db.createObjectStore("sessions", { keyPath: "id" });
-        };
-
-        request.onsuccess = (e) => {
-          let db = e.target.result;
-          let tx = db.transaction("sessions", "readwrite");
-          let store = tx.objectStore("sessions");
-          
-          store.put({ id: "active_session", data: finalDataJson });
-
-          tx.oncomplete = () => {
-            fetch("https://pipe.jspsych.org/api/data/", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                experimentID: "7to0EiezFvtE", 
-                filename: uniqueId + "_OT_Case.json",
-                data: finalDataJson
-              })
-            })
-            .then(() => {
-                window.location.replace("./dashboard/index.html");
-            })
-            .catch((error) => {
-                console.error("OSF sync failed", error);
-                window.location.replace("./dashboard/index.html");
-            });
-          };
-        };
-      }
-    });
-
-    var timeline = [];
-
-    var init_mic = {
+    /* ================= SETUP & CALIBRATION ================= */
+    timeline.push({
       type: jsPsychInitializeMicrophone,
       error_message: "<p>Microphone access is required.</p>"
-    };
-    timeline.push(init_mic);
+    });
 
-    var init_camera = {
+    timeline.push({
       type: jsPsychWebgazerInitCamera,
-      instructions: "<p>Center your face in the webcam window to initialize the clinical eye-tracker. Please ensure your face is well-lit and your screen brightness is up.</p>",
+      instructions: "<p>Center your face in the webcam window. Please ensure your face is well-lit and your screen brightness is up.</p>",
       button_text: "Continue to Calibration"
-    };
-    timeline.push(init_camera);
+    });
 
-/* --- THE ENFORCED CALIBRATION LOOP --- */
-    
     var calibration_grid = {
       type: jsPsychWebgazerCalibrate,
       calibration_mode: 'click',
@@ -187,15 +139,14 @@
       point_size: 20
     };
 
-    // NEW: Tell the participant what is about to happen
     var validation_instructions = {
       type: jsPsychHtmlKeyboardResponse,
       stimulus: `
         <div style="font-family:Arial; text-align:center; padding: 20px;">
           <h3 style="color:#2c3e50;">Calibration Complete. Now Testing Accuracy.</h3>
           <p style="font-size: 18px;">A new set of dots will appear. <strong>Do not click them.</strong></p>
-          <p style="font-size: 18px;">Just <strong>look</strong> directly at each dot until it disappears so we can verify the eye-tracker's accuracy.</p>
-          <p style="color:#7f8c8d; margin-top:30px;">Press any key to begin the accuracy test.</p>
+          <p style="font-size: 18px;">Just <strong>look</strong> directly at each dot until it disappears.</p>
+          <p style="color:#7f8c8d; margin-top:30px;">Press any key to begin.</p>
         </div>
       `
     };
@@ -205,213 +156,263 @@
       validation_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
       roi_radius: 200, 
       time_limit: 2000, 
-      show_validation_data: false // FIX: Turned off the messy diagnostic screen
+      show_validation_data: false
     };
 
-var calibrate_and_validate_loop = {
+    var calibrate_and_validate_loop = {
       timeline: [calibration_grid, validation_instructions, validation_trial],
       loop_function: function(data) {
-        // Extract the validation data object
         var validation_data = data.filter({trial_type: 'webgazer-validate'}).last(1).values()[0];
-        
-        // Did they fail?
         if (validation_data.percent_in_roi < 70) {
-            alert("Your eye-tracking accuracy was too low. Please ensure your face is well-lit, keep your head completely still, and try again.");
-            return true; // Loop again
+            alert("Your eye-tracking accuracy was too low. Please check your lighting, keep your head completely still, and try again.");
+            return true; 
         } else {
-            // THEY PASSED! Save their exact scores permanently to the dataset
             jsPsych.data.addProperties({
                 calibration_accuracy_percent: validation_data.percent_in_roi,
                 calibration_pixel_offset: validation_data.average_offset
             });
-            
-            return false; // Break the loop and continue to the simulation
+            return false; 
         }
       }
     };
     timeline.push(calibrate_and_validate_loop);
 
 
-    /* ================= THE MEGA-TRIAL: OT CASE STUDY ================= */
-    var ot_dashboard_ui = `
-      <div id="ot-container" style="display:flex; width:100vw; height:100vh; text-align:left; font-family:Arial, sans-serif; overflow:hidden;">
-         
-         <div style="width:280px; min-width:280px; flex-shrink:0; background:#2c3e50; color:white; padding:30px 20px; box-sizing:border-box; overflow-y:auto;">
-            <h3 style="margin-top:0; color:#3498db;">Case #4992</h3>
-            <p style="font-size:14px; line-height:1.5;"><strong>Patient:</strong> Evelyn S.<br><strong>Dx:</strong> R Hemiparesis</p>
-            <hr style="border-color:#34495e; margin:20px 0;">
-            
-            <button id="tab_welcome" style="width:100%; padding:12px; margin-bottom:10px; cursor:pointer; background:#34495e; color:white; border:none; border-radius:4px; text-align:left; font-weight:bold; box-sizing:border-box;">1. Case Brief</button>
-            <button id="tab_history" style="width:100%; padding:12px; margin-bottom:10px; cursor:pointer; background:#34495e; color:white; border:none; border-radius:4px; text-align:left; font-weight:bold; box-sizing:border-box;">2. Medical Chart</button>
-            <button id="tab_video" style="width:100%; padding:12px; margin-bottom:10px; cursor:pointer; background:#34495e; color:white; border:none; border-radius:4px; text-align:left; font-weight:bold; box-sizing:border-box;">3. ADL Observation</button>
-            <button id="tab_eval" style="width:100%; padding:12px; margin-bottom:10px; cursor:pointer; background:#34495e; color:white; border:none; border-radius:4px; text-align:left; font-weight:bold; box-sizing:border-box;">4. Intervention Plan</button>
+    /* ================= CASE 1: EVELYN S ================= */
+    const tabContents1 = {
+      welcome: `<h2 style="color:#2c3e50;">Case Brief</h2><p style="font-size:18px;">Review Evelyn's chart and ADL video.</p>`,
+      history: `<h2 style="color:#2c3e50;">Medical Chart</h2><div style="background:#fff; padding:20px; font-size:16px;"><p><strong>Patient:</strong> Evelyn S.</p><p><strong>Diagnosis:</strong> Ischemic stroke (L MCA). R hemiparesis.</p><p><strong>Goal:</strong> Independent meal prep.</p></div>`,
+      video: `<h2 style="color:#2c3e50;">ADL Observation</h2><div style="background:#111; color:#aaa; height:400px; display:flex; align-items:center; justify-content:center;"><span>▶️ Evelyn struggling to stabilize bread while spreading peanut butter.</span></div>`,
+      eval: `<h2 style="color:#2c3e50;">Intervention Plan</h2><div style="background:#fff; padding:20px;"><label><input type="radio" name="ae"> Rocker Knife</label><br><label><input type="radio" name="ae"> Dycem</label><br><label><input type="radio" name="ae"> Universal Cuff</label></div>`
+    };
+
+    var ui_template_1 = `
+      <div id="ot-container-1" style="display:flex; width:100vw; height:100vh; text-align:left; font-family:Arial; overflow:hidden;">
+         <div style="width:280px; background:#2c3e50; color:white; padding:30px 20px;">
+            <h3 style="color:#3498db;">Case #1</h3><p>Patient: Evelyn S.<br>Dx: Stroke</p><hr>
+            <button id="t1_welcome" style="width:100%; padding:12px; margin-bottom:10px;">1. Case Brief</button>
+            <button id="t1_history" style="width:100%; padding:12px; margin-bottom:10px;">2. Medical Chart</button>
+            <button id="t1_video" style="width:100%; padding:12px; margin-bottom:10px;">3. ADL Observation</button>
+            <button id="t1_eval" style="width:100%; padding:12px; margin-bottom:10px;">4. Intervention Plan</button>
          </div>
-         
-         <div id="main_pane" style="flex-grow:1; width:calc(100vw - 280px); padding:50px; background:#ecf0f1; position:relative; box-sizing:border-box; overflow-y:auto; overflow-x:hidden;">
-            <div id="dynamic_content">
-            </div>
-            
-            <button id="btn_submit_case" style="position:fixed; bottom:50px; right:50px; padding:15px 30px; font-size:16px; font-weight:bold; background:#27ae60; color:white; border:none; border-radius:5px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1); z-index:1000;">Submit Evaluation</button>
+         <div style="flex-grow:1; padding:50px; background:#ecf0f1; position:relative;">
+            <div id="dynamic_content_1"></div>
+            <button id="btn_submit_1" style="position:absolute; bottom:50px; right:50px; padding:15px 30px; background:#27ae60; color:white; font-weight:bold;">Submit</button>
          </div>
       </div>
     `;
 
-    var mega_trial_case_study = {
+    timeline.push({
       type: jsPsychHtmlKeyboardResponse,
-      stimulus: ot_dashboard_ui,
+      stimulus: ui_template_1,
       choices: "NO_KEYS",
-      extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#ot-container'] } }],
+      extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#ot-container-1'] } }],
+      data: { case_id: 1 },
       on_load: function() {
+        let liveDot = document.getElementById('webgazerGazeDot');
+        if (liveDot) liveDot.style.display = 'none';
+
         let caseStartTime = performance.now();
         let caseEvents = [];
 
         function logState(tabName) {
-          let now = performance.now() - caseStartTime;
-          caseEvents.push({
-            state: tabName,
-            html: tabContents[tabName],
-            timestamp: now
-          });
-          document.getElementById('dynamic_content').innerHTML = tabContents[tabName];
-          
-          ['welcome', 'history', 'video', 'eval'].forEach(id => {
-              let btn = document.getElementById('tab_' + id);
-              if(btn) btn.style.background = (id === tabName) ? '#3498db' : '#34495e';
-          });
+          caseEvents.push({ state: tabName, html: tabContents1[tabName], timestamp: performance.now() - caseStartTime });
+          document.getElementById('dynamic_content_1').innerHTML = tabContents1[tabName];
         }
-
         logState('welcome');
-
-        document.getElementById('tab_welcome').addEventListener('click', () => logState('welcome'));
-        document.getElementById('tab_history').addEventListener('click', () => logState('history'));
-        document.getElementById('tab_video').addEventListener('click', () => logState('video'));
-        document.getElementById('tab_eval').addEventListener('click', () => logState('eval'));
-
-        document.getElementById('btn_submit_case').addEventListener('click', () => {
-           jsPsych.finishTrial({
-               case_events: caseEvents
-           });
-        });
+        document.getElementById('t1_welcome').addEventListener('click', () => logState('welcome'));
+        document.getElementById('t1_history').addEventListener('click', () => logState('history'));
+        document.getElementById('t1_video').addEventListener('click', () => logState('video'));
+        document.getElementById('t1_eval').addEventListener('click', () => logState('eval'));
+        document.getElementById('btn_submit_1').addEventListener('click', () => jsPsych.finishTrial({ case_events: caseEvents }));
       },
-      on_finish: function(data) {
-          rawCaseData = data;
-      }
-    };
-    timeline.push(mega_trial_case_study);
+      on_finish: function(data) { rawCase1Data = data; }
+    });
 
-
-    /* ================= REPLAY DATA PROCESSING ================= */
-    var compile_media = {
+    timeline.push({
       type: jsPsychHtmlKeyboardResponse,
-      stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing dashboard cache... Please wait.</h3></div>',
-      choices: "NO_KEYS",
-      trial_duration: 1000,
-      on_load: function() {
-        buildPlaybackTimeline(rawCaseData);
-      }
-    };
-    timeline.push(compile_media);
+      stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing media...</h3></div>',
+      choices: "NO_KEYS", trial_duration: 1000,
+      on_load: function() { buildPlaybackTimeline(rawCase1Data); }
+    });
 
-
-    /* ================= RETROSPECTIVE THINK ALOUD ================= */
-    var rta_case_study = {
+    timeline.push({
       type: jsPsychHtmlAudioResponse,
-      stimulus: `
-        <div style="font-family:Arial, sans-serif; text-align:left;">
-          
-          <div style="position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:10000; background:rgba(255,255,255,0.95); padding:15px 30px; border:2px solid #2980b9; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.15); text-align:center;">
-            <h4 style="margin:0 0 5px 0; color:#2c3e50;">Retrospective Review</h4>
-            <p style="color:#d9534f; margin:0; font-size:14px;"><strong>🎙️ Audio Recording Active. Please narrate your clinical reasoning as you watch your review process.</strong></p>
+      stimulus: `<div style="font-family:Arial; text-align:left;">
+          <div style="position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:10000; background:#fff; padding:15px; border:2px solid #2980b9; text-align:center;">
+            <h4>Retrospective Review</h4><p style="color:red; margin:0;">🎙️ Audio Active. Narrate your reasoning.</p>
           </div>
-          
-          <div style="display:flex; width:100vw; height:100vh; background:#ecf0f1; overflow:hidden;">
-             
-             <div style="width:280px; min-width:280px; flex-shrink:0; background:#2c3e50; color:white; padding:30px 20px; box-sizing:border-box; overflow-y:auto;">
-                <h3 style="margin-top:0; color:#3498db;">Case #4992</h3>
-                <p style="font-size:14px; line-height:1.5;"><strong>Patient:</strong> Evelyn S.<br><strong>Dx:</strong> R Hemiparesis</p>
-                <hr style="border-color:#34495e; margin:20px 0;">
-                <div style="width:100%; padding:12px; margin-bottom:10px; background:#34495e; color:white; border-radius:4px; font-weight:bold; box-sizing:border-box;">1. Case Brief</div>
-                <div style="width:100%; padding:12px; margin-bottom:10px; background:#34495e; color:white; border-radius:4px; font-weight:bold; box-sizing:border-box;">2. Medical Chart</div>
-                <div style="width:100%; padding:12px; margin-bottom:10px; background:#34495e; color:white; border-radius:4px; font-weight:bold; box-sizing:border-box;">3. ADL Observation</div>
-                <div style="width:100%; padding:12px; margin-bottom:10px; background:#34495e; color:white; border-radius:4px; font-weight:bold; box-sizing:border-box;">4. Intervention Plan</div>
-             </div>
-             
-             <div style="flex-grow:1; width:calc(100vw - 280px); padding:50px; position:relative; box-sizing:border-box; overflow-y:auto; overflow-x:hidden;">
-                <div id="replay_dynamic_content"></div>
-                <button style="position:fixed; bottom:50px; right:50px; padding:15px 30px; font-size:16px; font-weight:bold; background:#27ae60; color:white; border:none; border-radius:5px; opacity:0.6; z-index:1000;">Submit Evaluation</button>
-             </div>
-          </div>
-
+          ${ui_template_1.replace('id="dynamic_content_1"', 'id="replay_content"')}
           <canvas id="replay-gaze-overlay" willReadFrequently="true" style="position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; pointer-events:none;"></canvas>
-        </div>
-      `,
-      recording_duration: 60000, 
-      show_done_button: true,
-      data: { task: 'rta_audio_case_study' },
+        </div>`,
+      recording_duration: 60000, show_done_button: true, data: { task: 'rta_case_1' },
       on_load: function() {
         playbackStartTime = performance.now();
         isPlaybackActive = true;
-
         function renderReplayLoop() {
           if (!isPlaybackActive) return; 
-
-          let display = document.getElementById('replay_dynamic_content');
+          let display = document.getElementById('replay_content');
           let liveCanvas = document.getElementById('replay-gaze-overlay');
-          
-          if (!display || !liveCanvas) {
-            requestAnimationFrame(renderReplayLoop);
-            return;
-          }
+          if (!display || !liveCanvas) return requestAnimationFrame(renderReplayLoop);
 
           let elapsed = performance.now() - playbackStartTime;
+          if (elapsed > totalPlaybackDuration) { playbackStartTime = performance.now(); elapsed = 0; }
 
-          if (elapsed > totalPlaybackDuration) {
-            playbackStartTime = performance.now();
-            elapsed = 0;
-          }
+          let currentState = playbackTimeline.find(s => elapsed >= s.startTime && elapsed < s.endTime);
+          if (currentState && display.innerHTML !== currentState.html) display.innerHTML = currentState.html;
 
-          let currentState = playbackTimeline.find(state => elapsed >= state.startTime && elapsed < state.endTime);
-          if (currentState) {
-             if (display.innerHTML !== currentState.html) {
-                 display.innerHTML = currentState.html;
-             }
-          } else {
-             display.innerHTML = '';
-          }
-
-          liveCanvas.width = window.innerWidth;
-          liveCanvas.height = window.innerHeight;
+          liveCanvas.width = window.innerWidth; liveCanvas.height = window.innerHeight;
           let ctx = liveCanvas.getContext('2d');
-          
-          if (ctx) {
-            ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-
-            let gazeIndex = 0;
-            while (gazeIndex < playbackGazePoints.length && playbackGazePoints[gazeIndex].t < elapsed) {
-              gazeIndex++;
-            }
-
-            if (gazeIndex > 0 && gazeIndex <= playbackGazePoints.length) {
-              let pointMatch = playbackGazePoints[gazeIndex - 1];
-              if (elapsed - pointMatch.t < 400) {
-                ctx.beginPath();
-                ctx.arc(pointMatch.x, pointMatch.y, 22, 0, 2 * Math.PI);
-                ctx.fillStyle = "rgba(217, 83, 79, 0.75)";
-                ctx.fill();
-              }
-            }
+          ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+          let gazeIndex = 0;
+          while (gazeIndex < playbackGazePoints.length && playbackGazePoints[gazeIndex].t < elapsed) gazeIndex++;
+          if (gazeIndex > 0) {
+            let p = playbackGazePoints[gazeIndex - 1];
+            if (elapsed - p.t < 400) { ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, 2*Math.PI); ctx.fillStyle = "rgba(217,83,79,0.75)"; ctx.fill(); }
           }
           requestAnimationFrame(renderReplayLoop);
         }
         requestAnimationFrame(renderReplayLoop);
       },
-      on_finish: function() {
-        isPlaybackActive = false; 
-        playbackTimeline = [];
-        playbackGazePoints = [];
+      on_finish: function() { isPlaybackActive = false; }
+    });
+
+    /* ================= MID-POINT INTERVENTION ================= */
+    timeline.push({
+        type: jsPsychCallFunction,
+        func: function() {
+            return new Promise((resolve) => {
+                let currentData = jsPsych.data.get().json();
+                let request = indexedDB.open("OT_Simulation_DB", 1);
+                request.onsuccess = (e) => {
+                    let db = e.target.result;
+                    let tx = db.transaction("sessions", "readwrite");
+                    tx.objectStore("sessions").put({ id: "active_session", data: currentData });
+                    tx.oncomplete = () => resolve();
+                };
+            });
+        }, async: true
+    });
+
+    var dashboard_iframe_trial = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: `
+        <div style="width:100vw; height:100vh; display:flex; flex-direction:column; font-family:Arial;">
+            <div style="padding:15px; background:#2c3e50; color:white; display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0;">Clinical Feedback Dashboard</h3>
+                <button id="btn_continue_case2" style="padding:10px 20px; font-weight:bold; background:#27ae60; color:white; border:none; cursor:pointer;">Continue to Case 2 ▶</button>
+            </div>
+            <iframe src="./dashboard/index.html" style="flex-grow:1; border:none; background:white;"></iframe>
+        </div>
+      `,
+      choices: "NO_KEYS",
+      on_load: function() {
+          document.getElementById('btn_continue_case2').addEventListener('click', function() { jsPsych.finishTrial(); });
       }
     };
-    timeline.push(rta_case_study);
+
+    timeline.push({
+      timeline: [dashboard_iframe_trial],
+      conditional_function: function() { return assigned_condition === 'dashboard'; }
+    });
+
+
+    /* ================= CASE 2: MARCUS T ================= */
+    const tabContents2 = {
+      welcome: `<h2 style="color:#2c3e50;">Case Brief</h2><p style="font-size:18px;">Review Marcus's chart and ADL video.</p>`,
+      history: `<h2 style="color:#2c3e50;">Medical Chart</h2><div style="background:#fff; padding:20px; font-size:16px;"><p><strong>Patient:</strong> Marcus T.</p><p><strong>Diagnosis:</strong> C6 Spinal Cord Injury (Incomplete).</p><p><strong>Status:</strong> Reduced grip strength, tenodesis grasp intact.</p></div>`,
+      video: `<h2 style="color:#2c3e50;">ADL Observation</h2><div style="background:#111; color:#aaa; height:400px; display:flex; align-items:center; justify-content:center;"><span>▶️ Marcus attempting to button a dress shirt.</span></div>`,
+      eval: `<h2 style="color:#2c3e50;">Intervention Plan</h2><div style="background:#fff; padding:20px;"><label><input type="radio" name="ae"> Button Hook</label><br><label><input type="radio" name="ae"> Dressing Stick</label><br><label><input type="radio" name="ae"> Velcro Conversions</label></div>`
+    };
+
+    var ui_template_2 = `
+      <div id="ot-container-2" style="display:flex; width:100vw; height:100vh; text-align:left; font-family:Arial; overflow:hidden;">
+         <div style="width:280px; background:#2c3e50; color:white; padding:30px 20px;">
+            <h3 style="color:#3498db;">Case #2</h3><p>Patient: Marcus T.<br>Dx: C6 SCI</p><hr>
+            <button id="t2_welcome" style="width:100%; padding:12px; margin-bottom:10px;">1. Case Brief</button>
+            <button id="t2_history" style="width:100%; padding:12px; margin-bottom:10px;">2. Medical Chart</button>
+            <button id="t2_video" style="width:100%; padding:12px; margin-bottom:10px;">3. ADL Observation</button>
+            <button id="t2_eval" style="width:100%; padding:12px; margin-bottom:10px;">4. Intervention Plan</button>
+         </div>
+         <div style="flex-grow:1; padding:50px; background:#ecf0f1; position:relative;">
+            <div id="dynamic_content_2"></div>
+            <button id="btn_submit_2" style="position:absolute; bottom:50px; right:50px; padding:15px 30px; background:#27ae60; color:white; font-weight:bold;">Submit</button>
+         </div>
+      </div>
+    `;
+
+    timeline.push({
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: ui_template_2,
+      choices: "NO_KEYS",
+      extensions: [{ type: jsPsychExtensionWebgazer, params: { targets: ['#ot-container-2'] } }],
+      data: { case_id: 2 },
+      on_load: function() {
+        let liveDot = document.getElementById('webgazerGazeDot');
+        if (liveDot) liveDot.style.display = 'none';
+        let caseStartTime = performance.now();
+        let caseEvents = [];
+        function logState(tabName) {
+          caseEvents.push({ state: tabName, html: tabContents2[tabName], timestamp: performance.now() - caseStartTime });
+          document.getElementById('dynamic_content_2').innerHTML = tabContents2[tabName];
+        }
+        logState('welcome');
+        document.getElementById('t2_welcome').addEventListener('click', () => logState('welcome'));
+        document.getElementById('t2_history').addEventListener('click', () => logState('history'));
+        document.getElementById('t2_video').addEventListener('click', () => logState('video'));
+        document.getElementById('t2_eval').addEventListener('click', () => logState('eval'));
+        document.getElementById('btn_submit_2').addEventListener('click', () => jsPsych.finishTrial({ case_events: caseEvents }));
+      },
+      on_finish: function(data) { rawCase2Data = data; }
+    });
+
+    timeline.push({
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: '<div style="text-align:center; font-family:Arial;"><h3>Processing media...</h3></div>',
+      choices: "NO_KEYS", trial_duration: 1000,
+      on_load: function() { buildPlaybackTimeline(rawCase2Data); }
+    });
+
+    timeline.push({
+      type: jsPsychHtmlAudioResponse,
+      stimulus: `<div style="font-family:Arial; text-align:left;">
+          <div style="position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:10000; background:#fff; padding:15px; border:2px solid #2980b9; text-align:center;">
+            <h4>Retrospective Review</h4><p style="color:red; margin:0;">🎙️ Audio Active. Narrate your reasoning.</p>
+          </div>
+          ${ui_template_2.replace('id="dynamic_content_2"', 'id="replay_content"')}
+          <canvas id="replay-gaze-overlay" willReadFrequently="true" style="position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; pointer-events:none;"></canvas>
+        </div>`,
+      recording_duration: 60000, show_done_button: true, data: { task: 'rta_case_2' },
+      on_load: function() {
+        playbackStartTime = performance.now();
+        isPlaybackActive = true;
+        function renderReplayLoop() {
+          if (!isPlaybackActive) return; 
+          let display = document.getElementById('replay_content');
+          let liveCanvas = document.getElementById('replay-gaze-overlay');
+          if (!display || !liveCanvas) return requestAnimationFrame(renderReplayLoop);
+
+          let elapsed = performance.now() - playbackStartTime;
+          if (elapsed > totalPlaybackDuration) { playbackStartTime = performance.now(); elapsed = 0; }
+
+          let currentState = playbackTimeline.find(s => elapsed >= s.startTime && elapsed < s.endTime);
+          if (currentState && display.innerHTML !== currentState.html) display.innerHTML = currentState.html;
+
+          liveCanvas.width = window.innerWidth; liveCanvas.height = window.innerHeight;
+          let ctx = liveCanvas.getContext('2d');
+          ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+          let gazeIndex = 0;
+          while (gazeIndex < playbackGazePoints.length && playbackGazePoints[gazeIndex].t < elapsed) gazeIndex++;
+          if (gazeIndex > 0) {
+            let p = playbackGazePoints[gazeIndex - 1];
+            if (elapsed - p.t < 400) { ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, 2*Math.PI); ctx.fillStyle = "rgba(217,83,79,0.75)"; ctx.fill(); }
+          }
+          requestAnimationFrame(renderReplayLoop);
+        }
+        requestAnimationFrame(renderReplayLoop);
+      },
+      on_finish: function() { isPlaybackActive = false; }
+    });
 
     /* start the experiment */
     jsPsych.run(timeline);
