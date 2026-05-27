@@ -13,6 +13,7 @@
     <script src="js/extension-webgazer.js"></script>
     <script src="js/plugin-webgazer-init-camera.js"></script>
     <script src="js/plugin-webgazer-init-calibrate.js"></script>
+    <script src="js/plugin-webgazer-validate.js"></script>
 
     <script src="js/plugin-initialize-microphone.js"></script>
     <script src="js/plugin-html-audio-response.js"></script>
@@ -78,6 +79,7 @@
     };
 
     // Helper: Converts the state-based Mega-Trial data into a timeline for the replay engine
+    // NEW: Includes a rolling average (smoothing) to fix jittery playback dots
     function buildPlaybackTimeline(trialData) {
       playbackTimeline = [];
       playbackGazePoints = [];
@@ -88,20 +90,26 @@
           for(let i = 0; i < events.length; i++) {
               let start = events[i].timestamp;
               let end = (i < events.length - 1) ? events[i+1].timestamp : trialData.rt;
-              playbackTimeline.push({
-                  startTime: start,
-                  endTime: end,
-                  html: events[i].html
-              });
+              playbackTimeline.push({ startTime: start, endTime: end, html: events[i].html });
           }
       }
 
+      // Extract raw points
+      let rawPoints = [];
       if(trialData.webgazer_data && Array.isArray(trialData.webgazer_data)) {
-          trialData.webgazer_data.forEach(p => {
-              playbackGazePoints.push({ x: p.x, y: p.y, t: p.t });
-          });
+          trialData.webgazer_data.forEach(p => rawPoints.push({ x: p.x, y: p.y, t: p.t }));
       }
-      playbackGazePoints.sort((a, b) => a.t - b.t);
+      rawPoints.sort((a, b) => a.t - b.t);
+
+      // MATHEMATICAL SMOOTHING: Rolling average over a 5 frame window to kill jitter
+      let windowSize = 5;
+      for (let i = 0; i < rawPoints.length; i++) {
+          let startIdx = Math.max(0, i - windowSize);
+          let subset = rawPoints.slice(startIdx, i + 1);
+          let avgX = subset.reduce((sum, p) => sum + p.x, 0) / subset.length;
+          let avgY = subset.reduce((sum, p) => sum + p.y, 0) / subset.length;
+          playbackGazePoints.push({ x: avgX, y: avgY, t: rawPoints[i].t });
+      }
     }
 
     /* ================= INITIALIZATION & DUAL-ROUTE DATA PIPELINE ================= */
@@ -109,7 +117,6 @@
       extensions: [{ type: jsPsychExtensionWebgazer }],
       on_finish: function() {
         
-        // 1. Show a loading screen so the participant doesn't close the tab early
         document.body.innerHTML = `
           <div style="text-align:center; margin-top:20%; font-family:Arial; color:#2c3e50;">
             <h3>Saving high-fidelity session data...</h3>
@@ -120,7 +127,6 @@
         let finalDataJson = jsPsych.data.get().json();
         let uniqueId = "P_" + Math.random().toString(36).substr(2, 9).toUpperCase();
 
-        // 2. OPEN THE DATABASE (IndexedDB for the local R dashboard)
         let request = indexedDB.open("OT_Simulation_DB", 1);
         
         request.onupgradeneeded = (e) => {
@@ -133,11 +139,9 @@
           let tx = db.transaction("sessions", "readwrite");
           let store = tx.objectStore("sessions");
           
-          // Save the full data object locally
           store.put({ id: "active_session", data: finalDataJson });
 
           tx.oncomplete = () => {
-            // 3. ROUTE TO OSF (The permanent research backup)
             fetch("https://pipe.jspsych.org/api/data/", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -148,12 +152,10 @@
               })
             })
             .then(() => {
-                // 4. THE HANDOFF: Redirect to the ShinyLive dashboard
                 window.location.replace("./dashboard/index.html");
             })
             .catch((error) => {
                 console.error("OSF sync failed", error);
-                // Even if the internet drops and OSF fails, still send them to the dashboard
                 window.location.replace("./dashboard/index.html");
             });
           };
@@ -171,18 +173,41 @@
 
     var init_camera = {
       type: jsPsychWebgazerInitCamera,
-      instructions: "<p>Center your face in the webcam window to initialize the clinical eye-tracker.</p>",
+      instructions: "<p>Center your face in the webcam window to initialize the clinical eye-tracker. Please ensure your face is well-lit and your screen brightness is up.</p>",
       button_text: "Continue to Calibration"
     };
     timeline.push(init_camera);
 
+    /* --- THE ENFORCED CALIBRATION LOOP --- */
     var calibration_grid = {
       type: jsPsychWebgazerCalibrate,
       calibration_mode: 'click',
       calibration_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
       point_size: 20
     };
-    timeline.push(calibration_grid);
+
+    var validation_trial = {
+      type: jsPsychWebgazerValidate,
+      validation_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
+      roi_radius: 200, 
+      time_limit: 2000, 
+      show_validation_data: true 
+    };
+
+    var calibrate_and_validate_loop = {
+      timeline: [calibration_grid, validation_trial],
+      loop_function: function(data) {
+        var validation_data = data.filter({trial_type: 'webgazer-validate'}).last(1).values()[0];
+        
+        if (validation_data.percent_in_roi < 70) {
+            alert("Your eye-tracking accuracy was too low. Please ensure your face is well-lit, keep your head completely still, and try again.");
+            return true; 
+        } else {
+            return false; 
+        }
+      }
+    };
+    timeline.push(calibrate_and_validate_loop);
 
 
     /* ================= THE MEGA-TRIAL: OT CASE STUDY ================= */
