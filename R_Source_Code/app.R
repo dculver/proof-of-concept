@@ -2,6 +2,7 @@ library(shiny)
 library(jsonlite)
 library(dplyr)
 library(ggplot2)
+library(S7)
 
 ui <- fluidPage(
   tags$head(tags$script(HTML("
