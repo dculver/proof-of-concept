@@ -178,7 +178,8 @@
     };
     timeline.push(init_camera);
 
-    /* --- THE ENFORCED CALIBRATION LOOP --- */
+/* --- THE ENFORCED CALIBRATION LOOP --- */
+    
     var calibration_grid = {
       type: jsPsychWebgazerCalibrate,
       calibration_mode: 'click',
@@ -186,16 +187,29 @@
       point_size: 20
     };
 
+    // NEW: Tell the participant what is about to happen
+    var validation_instructions = {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: `
+        <div style="font-family:Arial; text-align:center; padding: 20px;">
+          <h3 style="color:#2c3e50;">Calibration Complete. Now Testing Accuracy.</h3>
+          <p style="font-size: 18px;">A new set of dots will appear. <strong>Do not click them.</strong></p>
+          <p style="font-size: 18px;">Just <strong>look</strong> directly at each dot until it disappears so we can verify the eye-tracker's accuracy.</p>
+          <p style="color:#7f8c8d; margin-top:30px;">Press any key to begin the accuracy test.</p>
+        </div>
+      `
+    };
+
     var validation_trial = {
       type: jsPsychWebgazerValidate,
       validation_points: [[10,10], [10,50], [10,90], [50,10], [50,50], [50,90], [90,10], [90,50], [90,90]],
       roi_radius: 200, 
       time_limit: 2000, 
-      show_validation_data: true 
+      show_validation_data: false // FIX: Turned off the messy diagnostic screen
     };
 
     var calibrate_and_validate_loop = {
-      timeline: [calibration_grid, validation_trial],
+      timeline: [calibration_grid, validation_instructions, validation_trial], // Added instructions to the timeline
       loop_function: function(data) {
         var validation_data = data.filter({trial_type: 'webgazer-validate'}).last(1).values()[0];
         
