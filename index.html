@@ -208,16 +208,24 @@
       show_validation_data: false // FIX: Turned off the messy diagnostic screen
     };
 
-    var calibrate_and_validate_loop = {
-      timeline: [calibration_grid, validation_instructions, validation_trial], // Added instructions to the timeline
+var calibrate_and_validate_loop = {
+      timeline: [calibration_grid, validation_instructions, validation_trial],
       loop_function: function(data) {
+        // Extract the validation data object
         var validation_data = data.filter({trial_type: 'webgazer-validate'}).last(1).values()[0];
         
+        // Did they fail?
         if (validation_data.percent_in_roi < 70) {
             alert("Your eye-tracking accuracy was too low. Please ensure your face is well-lit, keep your head completely still, and try again.");
-            return true; 
+            return true; // Loop again
         } else {
-            return false; 
+            // THEY PASSED! Save their exact scores permanently to the dataset
+            jsPsych.data.addProperties({
+                calibration_accuracy_percent: validation_data.percent_in_roi,
+                calibration_pixel_offset: validation_data.average_offset
+            });
+            
+            return false; // Break the loop and continue to the simulation
         }
       }
     };
