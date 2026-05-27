@@ -28,6 +28,7 @@
     let playbackStartTime = 0;
     let isPlaybackActive = false;
 
+    // Automated interception framework to map video style parameters safely
     if (window.webgazer && typeof webgazer.showVideo === 'function') {
       var originalShowVideo = webgazer.showVideo;
       webgazer.showVideo = function(val) {
@@ -76,6 +77,7 @@
       `
     };
 
+    // Helper: Converts the state-based Mega-Trial data into a timeline for the replay engine
     function buildPlaybackTimeline(trialData) {
       playbackTimeline = [];
       playbackGazePoints = [];
@@ -102,21 +104,60 @@
       playbackGazePoints.sort((a, b) => a.t - b.t);
     }
 
-    /* ================= INITIALIZATION & SETUP ================= */
+    /* ================= INITIALIZATION & DUAL-ROUTE DATA PIPELINE ================= */
     var jsPsych = initJsPsych({
       extensions: [{ type: jsPsychExtensionWebgazer }],
       on_finish: function() {
-        // Automatically download both formats upon completion
-        jsPsych.data.get().localSave('csv', 'OT_Simulation_Backup.csv');
-        jsPsych.data.get().localSave('json', 'OT_Simulation_RawData.json');
         
+        // 1. Show a loading screen so the participant doesn't close the tab early
         document.body.innerHTML = `
           <div style="text-align:center; margin-top:20%; font-family:Arial; color:#2c3e50;">
-            <h3>Simulation Complete.</h3>
-            <p>Your data files (CSV and JSON) have been downloaded automatically.</p>
-            <p>You may now close this window.</p>
+            <h3>Saving high-fidelity session data...</h3>
+            <p>Please do not close this tab. You will be redirected to your feedback dashboard momentarily.</p>
           </div>
         `;
+
+        let finalDataJson = jsPsych.data.get().json();
+        let uniqueId = "P_" + Math.random().toString(36).substr(2, 9).toUpperCase();
+
+        // 2. OPEN THE DATABASE (IndexedDB for the local R dashboard)
+        let request = indexedDB.open("OT_Simulation_DB", 1);
+        
+        request.onupgradeneeded = (e) => {
+          let db = e.target.result;
+          db.createObjectStore("sessions", { keyPath: "id" });
+        };
+
+        request.onsuccess = (e) => {
+          let db = e.target.result;
+          let tx = db.transaction("sessions", "readwrite");
+          let store = tx.objectStore("sessions");
+          
+          // Save the full data object locally
+          store.put({ id: "active_session", data: finalDataJson });
+
+          tx.oncomplete = () => {
+            // 3. ROUTE TO OSF (The permanent research backup)
+            fetch("https://pipe.jspsych.org/api/data/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                experimentID: "7to0EiezFvtE", 
+                filename: uniqueId + "_OT_Case.json",
+                data: finalDataJson
+              })
+            })
+            .then(() => {
+                // 4. THE HANDOFF: Redirect to the ShinyLive dashboard
+                window.location.replace("./dashboard/index.html");
+            })
+            .catch((error) => {
+                console.error("OSF sync failed", error);
+                // Even if the internet drops and OSF fails, still send them to the dashboard
+                window.location.replace("./dashboard/index.html");
+            });
+          };
+        };
       }
     });
 
@@ -254,7 +295,7 @@
              </div>
           </div>
 
-          <canvas id="replay-gaze-overlay" style="position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; pointer-events:none;"></canvas>
+          <canvas id="replay-gaze-overlay" willReadFrequently="true" style="position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; pointer-events:none;"></canvas>
         </div>
       `,
       recording_duration: 60000, 
